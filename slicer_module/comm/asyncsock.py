@@ -10,7 +10,7 @@
 # https://pymotw.com/2/asyncore/
 
 import asyncore
-
+import queue
 import logging
 import socket
 import threading #would multiprocessing be better?
@@ -78,15 +78,15 @@ class SlicerComm():
             data = data[:-len(packet_terminator)]
             data = data.split(' net_packet: ')
             self.received_data = [] #empty buffer
-            try:
-                #print(data[1])
-                data[1] = eval(str(data[1]))
-                data[1] = zlib.decompress(data[1]).decode()
-                #print(data[1])
-                if data[0] in self.cmd_ops: self.cmd_ops[data[0]](data[1]) #call stored function, pass stored arguments from tuple
-                elif data[0] in self.cmd_ops and len(data) > 2: self.cmd_ops[data[0]][0](data[1], *self.cmd_ops[data[0]][1]) # call stored function this way if more args exist - not tested
-                else: pass
-            except: pass
+            #print(data[1])
+            #try:
+            data[1] = eval(str(data[1]))
+            data[1] = zlib.decompress(data[1]).decode()
+            print(data[0])
+            if data[0] in self.cmd_ops: self.cmd_ops[data[0]](data[1]) #call stored function, pass stored arguments from tuple
+            elif data[0] in self.cmd_ops and len(data) > 2: self.cmd_ops[data[0]][0](data[1], *self.cmd_ops[data[0]][1]) # call stored function this way if more args exist - not tested
+            else: pass
+            #except: pass
             return
 
         def send_data(self, cmd, data):
@@ -122,7 +122,7 @@ class BlenderComm():
         
     def check_main_thread (main_thread, server_thread, socket_obj):
         while main_thread.is_alive() and server_thread.is_alive():
-            time.sleep(2)
+            time.sleep(5)
         socket_obj.stop_server(socket_obj)
         BlenderComm.stop_thread(server_thread)
         exit()
@@ -223,6 +223,7 @@ class BlenderComm():
         def _process_data(self):
             """We have the full ECHO command"""
             data = ''.join(self.received_data)
+            if packet_terminator not in data: return
             data = data[:-len(packet_terminator)]
             #print(data)
             data = data.split(' net_packet: ')
@@ -231,13 +232,17 @@ class BlenderComm():
             try:
                 data[1] = eval(str(data[1]))
                 data[1] = zlib.decompress(data[1]).decode()
-            
-                if data[0] in self.cmd_ops_client: self.cmd_ops_client[data[0]](data[1]) #call stored function, pass stored arguments from tuple
-                elif data[0] in self.cmd_ops_client and len(data) > 2: self.cmd_ops_client[data[0]][0](data[1], *self.cmd_ops_client[data[0]][1])
+                print("received CMD: " + data[0])
+                #print(data[1])
+                if data[0] in self.cmd_ops_client:
+                    #self.cmd_ops_client[data[0]](data[1]) #call stored function, pass stored arguments from tuple
+                    self.instance.queue.put(data)
+                #elif data[0] in self.cmd_ops_client and len(data) > 2: self.cmd_ops_client[data[0]][0](data[1], *self.cmd_ops_client[data[0]][1])
                 else: pass
             except: pass
 
         def send_data(self, cmd, data):
+            print("sent CMD: " + cmd)
             data = str(zlib.compress(str.encode(data, encoding='UTF-8'), compression))
             self.send(str.encode(cmd.upper() + " net_packet: " + data + packet_terminator))
 
@@ -255,6 +260,7 @@ class BlenderComm():
             if cmd_handle is not None: 
                 for CMD, handler in cmd_handle:
                     self.cmd_ops[CMD] = handler
+            self.queue = queue.Queue()
 
         def handle_accepted(self, sock, addr):
             print('Incoming connection from %s' % repr(addr))

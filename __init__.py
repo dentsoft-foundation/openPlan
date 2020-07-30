@@ -35,9 +35,14 @@ import inspect
 import time
 import numpy as np
 from numpy import nan
+from mathutils import Matrix
+import queue
+
+import math
 
 #Blender
 import bpy
+import bmesh
 
 #XML
 from xml.etree import ElementTree as ET
@@ -148,16 +153,16 @@ def import_obj_from_slicer(data):
     #new_object.data.transform(matrix)
     #new_object.data.update()
 
-def send_obj_to_slicer(objects = []):
+def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
     if asyncsock.socket_obj is not None:
         handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
         if "export_to_slicer" not in handlers:
             bpy.app.handlers.depsgraph_update_post.append(export_to_slicer) 
                         
-        if "SlicerLink" not in bpy.data.collections:
-            sg = bpy.data.collections.new('SlicerLink')
+        if group not in bpy.data.collections:
+            sg = bpy.data.collections.new(group)
         else:
-            sg = bpy.data.collections['SlicerLink']
+            sg = bpy.data.collections[group]
 
         if len(objects) == 1:
             ob = bpy.data.objects[objects[0]]
@@ -243,9 +248,9 @@ def obj_check_handle(data):
     else:
         sg = bpy.data.collections['SlicerLink']
     if status == "STATUS":
-        print([ob.name for ob in bpy.data.collections['SlicerLink'].objects[:]])
-        print(obj_name)
-        print([ob.name for ob in bpy.data.objects[:]])
+        #print([ob.name for ob in bpy.data.collections['SlicerLink'].objects[:]])
+        #print(obj_name)
+        #print([ob.name for ob in bpy.data.objects[:]])
         link_col_found = obj_name in [ob.name for ob in bpy.data.collections['SlicerLink'].objects[:]]
         b_obj_exist = obj_name in [ob.name for ob in bpy.data.objects[:]]
         if link_col_found == True and b_obj_exist == True:
@@ -263,16 +268,16 @@ def obj_check_handle(data):
             sg.objects.link(bpy.data.objects[obj])
         write_ob_transforms_to_cache(sg.objects)
     elif status == "MISSING":
-        send_obj_to_slicer([obj_name])
+        send_obj_to_slicer([obj_name], "SlicerLink")
     elif status == "MISSING_MULTIPLE":
         obj_name = obj_name.split(",")
         #print(obj_name)
-        send_obj_to_slicer(obj_name)
+        send_obj_to_slicer(obj_name, "SlicerLink")
     elif status == "LINK+MISSING_MULTIPLE":
         unlinked, missing = obj_name.split(";")
         unlinked = unlinked.split(",")
         missing = missing.split(",")
-        send_obj_to_slicer(missing)
+        send_obj_to_slicer(missing, "SlicerLink")
         for obj in unlinked:
             sg.objects.link(bpy.data.objects[obj])
         write_ob_transforms_to_cache(sg.objects)
@@ -302,9 +307,228 @@ def obj_check_send():
                 names = names + ob.name + ","
         asyncsock.socket_obj.sock_handler[0].send_data("CHECK", "STATUS_MULTIPLE_BREAK_" + names[:-1])
 
+def update_scene_blender(xml):
+    #time.sleep(0.5)
+    bpy.ops.object.select_all(action='DESELECT')
+    #print(xml)
+    tree = ElementTree(fromstring(xml))
+    x_scene = tree.getroot()
+    bpy.data.objects[x_scene[0].get('name')].select_set(True)
+    xml_mx = x_scene[0].find('matrix')
+    my_matrix = []
+    for i in range(0,4):
+        col = []
+        for j in range(0,4):
+            col.append(float(xml_mx[i][j].text))
+        my_matrix.append(col)
+    '''
+    for i in range(0,3):
+        my_matrix[i][3] = my_matrix[3][i]
+        my_matrix[3][i] = 0.0
+    '''
+
+    my_matrix = Matrix(my_matrix)
+    #print(my_matrix)
+    bpy.data.objects[x_scene[0].get('name')].matrix_world = my_matrix
+    dg = bpy.context.evaluated_depsgraph_get()
+    dg.update()
+
+
+def resize_slice_plane(planeBMesh, width, height, axes):
+    dims = [width, height]
+    bm = planeBMesh
+    # from https://blenderartists.org/t/edge-resizer-operator/634873/7
+    # https://blenderartists.org/uploads/default/original/4X/e/1/1/e1116b9c030b3b0f7f1963e9d52a4995a5e77887.py
+    #me = bpy.context.object.data
+    #bm = bmesh.new()
+    #bm.from_mesh(me)
+    #length that we want for the edge
+
+    for dim in dims:
+        wanted_length = dim
+
+        #we want to modify only the active edge and the selected edge "follow"
+        bm.select_history.clear()
+        
+        if hasattr(bm.verts, "ensure_lookup_table"): 
+            bm.edges.ensure_lookup_table()
+            # only if you need to:
+            # bm.edges.ensure_lookup_table()   
+            # bm.faces.ensure_lookup_table()
+        
+        edge = bm.edges[axes[0]]
+        edge.select_set(True)
+        bm.select_history.add(edge)
+        edge = bm.edges[axes[1]]
+        edge.select_set(True)
+        bm.select_history.add(edge)
+
+        e = bm.select_history.active
+        v1 = e.verts[0]
+        v2 = e.verts[1]
+        
+        
+        #which vertex should be v1, it must be the vertex linked to another selected edge, we count the link of each vertex, the one with the much linked vertices (should be 1 vs 2 if we are in front of a nice user ;) 
+        
+        switch = 0
+        
+        for el in bm.edges:
+            if el.select:
+                vl1 = el.verts[0]
+                vl2 = el.verts[1]
+                
+                if vl1 == v1 or vl2 == v1:
+                    switch+=1
+                    
+                if vl1 == v2 or vl2 == v2:
+                    switch-=1
+                    
+        #print(switch)
+        
+        if switch<0:
+            v1,v2 = v2,v1
+        
+        l = math.sqrt(
+        (v1.co.x - v2.co.x)*(v1.co.x - v2.co.x)+
+        (v1.co.y - v2.co.y)*(v1.co.y - v2.co.y)+
+        (v1.co.z - v2.co.z)*(v1.co.z - v2.co.z))
+        #print(l)
+        ratio1 = wanted_length/l
+        ratio2 = wanted_length/l
+        #we've calculate the ratio needed to multiply the edge at the good size
+        #we remove one, now we know the length to add to have the good size
+        ratio1-=1
+        ratio2-=1   		 
+        
+        #print(ratio1)
+        #print(ratio2)
+        #print("-----")
+        x1 = (v1.co.x - v2.co.x)*ratio1
+        y1 = (v1.co.y - v2.co.y)*ratio1
+        z1 = (v1.co.z - v2.co.z)*ratio1
+        
+        
+        v1.co.x += x1
+        v1.co.y += y1
+        v1.co.z += z1
+        
+        #the vertices that we shoudn't touch
+        done = [v1,v2]
+        
+        for el in bm.edges:
+            if el.select:
+                vl1 = el.verts[0]
+                vl2 = el.verts[1]
+                
+                if vl1 not in done:
+                    done.append(vl1)
+                    vl1.co.x += x1
+                    vl1.co.y += y1
+                    vl1.co.z += z1
+                
+                if vl2 not in done:
+                    done.append(vl2)
+                    vl2.co.x += x1
+                    vl2.co.y += y1
+                    vl2.co.z += z1
+                    
+        axes.reverse()
+
+    return bm
+
+#https://github.com/florianfelix/io_import_images_as_planes_rewrite/blob/master/io_import_images_as_planes.py#L918
+def live_img_update(image):
+    sliceName, modelName, image_dim, plane_dim, image_np = image.split("_BREAK_")
+    image_dim = eval(image_dim)
+    plane_dim = eval(plane_dim)
+    image_w, image_h = image_dim[0], image_dim[1]
+    plane_w, plane_h = plane_dim[0], plane_dim[1]
+    image_np = eval(image_np)
+    #print(image_np)
+    if sliceName not in bpy.data.images.keys():
+        bpy.data.images.new(sliceName, width=20, height=20, alpha=True, float_buffer=True)
+        engine = bpy.context.scene.render.engine
+        if engine in {'CYCLES', 'BLENDER_EEVEE', 'BLENDER_OPENGL'}:
+            material = create_cycles_material(bpy.context, sliceName, bpy.data.images[sliceName])
+            bpy.data.objects[modelName].data.materials.append(material)
+    outputImg = bpy.data.images[sliceName]
+    if not outputImg.generated_width == image_w or not outputImg.generated_height == image_h:
+        outputImg.generated_width = image_w
+        outputImg.generated_height = image_h
+
+    outputImg.pixels = ((np.asarray(image_np))*1/255).flatten()
+
+    me = bpy.data.meshes.get(modelName)
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    if hasattr(bm.verts, "ensure_lookup_table"): 
+            bm.edges.ensure_lookup_table()
+            # only if you need to:
+            # bm.edges.ensure_lookup_table()   
+            # bm.faces.ensure_lookup_table()
+    '''
+    print(int(bm.edges[0].calc_length()))
+    print(int(plane_h/10))
+    print(int(bm.edges[1].calc_length()))
+    print(int(plane_w/10))
+    '''
+    if not int(bm.edges[0].calc_length()) == int(plane_h/10) or not int(bm.edges[1].calc_length()) == int(plane_w/10):
+        bm = resize_slice_plane(bm, plane_w/10, plane_h/10, [0,1])
+        bm.to_mesh(me)
+        bm.free()
+        me.update()
+        bm = None
+        asyncsock.socket_obj.sock_handler[0].send_data("DEL", modelName)
+        bpy.context.view_layer.objects.active = bpy.data.objects.get(modelName)
+        bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+        send_obj_to_slicer([modelName], "ViewLink")
+        print("plane replaced!")
+    if bm is not None:
+        bm.free()
+        me.update()
+        print("plane NOT replaced")
+    #bpy.context.view_layer.objects.active = bpy.data.objects.get("Plane")
+    #bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+    #set our delete mode
+    
+
+def clean_node_tree(node_tree):
+    """Clear all nodes in a shader node tree except the output.
+    Returns the output node
+    """
+    nodes = node_tree.nodes
+    for node in list(nodes):  # copy to avoid altering the loop's data source
+        if not node.type == 'OUTPUT_MATERIAL':
+            nodes.remove(node)
+
+    return node_tree.nodes[0]
+
+def create_cycles_material(context, sliceName, img_spec):
+    image = img_spec
+    image.alpha_mode = "STRAIGHT" #or NONE
+    name_compat = sliceName
+    material = None
+    for mat in bpy.data.materials:
+        if mat.name == name_compat:
+            material = mat
+    if not material:
+        material = bpy.data.materials.new(name=name_compat)
+
+    material.use_nodes = True
+    node_tree = material.node_tree
+    out_node = clean_node_tree(node_tree)
+
+    #tex_image = create_cycles_texnode(context, node_tree, img_spec)
+    tex_image = node_tree.nodes.new('ShaderNodeTexImage')
+    tex_image.image = bpy.data.images[sliceName]
+    node_tree.links.new(out_node.inputs[0], tex_image.outputs[0])
+
+
+    return material
+
+
 @persistent
 def export_to_slicer(scene):
-    
     #check for changes
     changed = detect_transforms()
     if changed == None: return  #TODO, more complex scene monitoring
@@ -322,7 +546,7 @@ def export_to_slicer(scene):
         __m.transform_cache[ob_name] = bpy.data.objects[ob_name].matrix_world.copy()
     
     #write an xml file with new info about objects
-    obs = [bpy.data.objects.get(ob_name) for ob_name in changed if bpy.data.objects.get(ob_name)]
+    obs = [bpy.data.objects.get(ob_name) for ob_name in changed if bpy.data.objects.get(ob_name) and ob_name in bpy.data.collections['SlicerLink'].objects]
     x_scene = build_xml_scene(obs)
     xml_str = tostring(x_scene).decode()
     asyncsock.socket_obj.sock_handler[0].send_data("XML", xml_str)
@@ -389,7 +613,6 @@ class SelectedtoSlicerGroup(bpy.types.Operator):
         
         return {'FINISHED'}
 
-    
 class StartSlicerLinkServer(bpy.types.Operator):
     """
     Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
@@ -399,7 +622,7 @@ class StartSlicerLinkServer(bpy.types.Operator):
     
     def execute(self,context):
         if asyncsock.socket_obj == None:
-            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle)])
+            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update)])
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
             context.scene.socket_state = "SERVER"
 
@@ -407,7 +630,7 @@ class StartSlicerLinkServer(bpy.types.Operator):
             wm = bpy.context.window_manager
             km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
             kmi = km.keymap_items.new('link_slicer.delete_objects_both', 'DEL', 'PRESS')
-
+            bpy.ops.wm.modal_timer_operator("INVOKE_DEFAULT")
             ShowMessageBox("Server started.", "linkSlicerBlender Info:")
         return {'FINISHED'}
 
@@ -520,7 +743,6 @@ class deleteObjectsBoth(bpy.types.Operator):
             
         return {'FINISHED'}
 
-
 class StopSlicerLink(bpy.types.Operator):
     """
     Stop updating slicer and remove the handler from scene_update_post
@@ -535,16 +757,58 @@ class StopSlicerLink(bpy.types.Operator):
             bpy.app.handlers.depsgraph_update_post.remove(export_to_slicer)
 
         if context.scene.socket_state == "SERVER":
-            asyncsock.socket_obj.stop_server(asyncsock.socket_obj)
-            asyncsock.BlenderComm.stop_thread(asyncsock.thread)
+            try:
+                asyncsock.socket_obj.stop_server(asyncsock.socket_obj)
+                asyncsock.BlenderComm.stop_thread(asyncsock.thread)
+            except: pass
             asyncsock.socket_obj = None
             context.scene.socket_state = "NONE"
         elif context.scene.socket_state == "CLIENT":
             asyncsock.socket_obj.handle_close()
             context.scene.socket_state = "NONE"
-        asyncsock.thread.join()
+        try: asyncsock.thread.join()
+        except: pass
         print("thread joined")
         return {'FINISHED'}        
+
+class AddSliceView(bpy.types.Operator):
+    """
+    Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
+    """
+    bl_idname = "link_slicer.add_slice_view"
+    bl_label = "Add View"
+    
+    def execute(self,context):
+        if asyncsock.socket_obj is not None:
+            for scene in bpy.data.scenes:
+                scene.render.engine = 'CYCLES'
+                scene.cycles.device = 'GPU'
+            sliceName=bpy.context.view_layer.objects.active.name
+            #send_obj_to_slicer([sliceName], "ViewLink")
+
+            #if bpy.data.objects.get(sliceName) is None:
+            #bpy.ops.mesh.primitive_plane_add(size=100, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+            #bpy.ops.mesh.select_all(action='DESELECT')
+            #bpy.ops.object.editmode_toggle()
+            #bpy.data.objects.get(sliceName).name = sliceName
+            if not bpy.data.objects.get(sliceName).data.name == sliceName:
+                bpy.data.objects.get(sliceName).data.name = sliceName
+            bpy.ops.object.editmode_toggle()
+            bpy.ops.mesh.select_all(action='DESELECT')
+            bpy.ops.object.editmode_toggle()
+            #bpy.ops.object.select_all(action='DESELECT')
+            #bpy.context.view_layer.objects.active = bpy.data.objects.get(sliceName)
+            
+            
+            #send_obj_to_slicer([sliceName], "ViewLink")
+            #time.sleep(1)
+            asyncsock.socket_obj.sock_handler[0].send_data("SETUP_SLICE", sliceName)
+            
+
+            #bpy.data.collections['SlicerLink'].objects.unlink(plane)
+
+            
+        return {'FINISHED'}
 
 
 class SlicerLinkPanel(bpy.types.Panel):
@@ -601,6 +865,44 @@ class SlicerLinkPanel(bpy.types.Panel):
             row.operator("link_slicer.delete_objects_both")
             #row = layout.row()
             #row.prop(context.scene, "delete_slicer")
+            row = layout.row()
+            row.label(text="Slice Settings")
+            row.operator("link_slicer.add_slice_view")
+            #row = layout.row()
+
+class ModalTimerOperator(bpy.types.Operator):
+    """Operator which runs its self from a timer"""
+    bl_idname = "wm.modal_timer_operator"
+    bl_label = "Modal Timer Operator"
+
+    _timer = None
+
+    def modal(self, context, event):
+        if event.type in {'ESC'}:
+            self.cancel(context)
+            return {'CANCELLED'}
+
+        if event.type == 'TIMER':
+            while not asyncsock.socket_obj.queue.empty():
+                try:
+                    data = asyncsock.socket_obj.queue.get_nowait()
+                    asyncsock.socket_obj.cmd_ops[data[0]](data[1])
+                except queue.Empty: continue
+                asyncsock.socket_obj.queue.task_done()
+
+            asyncsock.socket_obj.queue.join()
+
+        return {'PASS_THROUGH'}
+
+    def execute(self, context):
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(0.05, window=context.window)
+        wm.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        wm = context.window_manager
+        wm.event_timer_remove(self._timer)
 
 
 @persistent
@@ -615,6 +917,7 @@ def on_save_pre(*args):
 def on_save_post(*args):
     if asyncsock.socket_obj is not None:
         bpy.context.scene.socket_state = "SERVER"
+
 
 
 def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
@@ -648,6 +951,8 @@ def register():
     bpy.utils.register_class(deleteObjectsBoth)
     bpy.utils.register_class(DEL_type_props)
     bpy.types.Scene.DEL_type_props = bpy.props.PointerProperty(type=DEL_type_props)
+    bpy.utils.register_class(AddSliceView)
+    bpy.utils.register_class(ModalTimerOperator)
     
 
 def unregister():
@@ -657,7 +962,7 @@ def unregister():
         bpy.app.handlers.save_pre.remove(on_save_pre)
     if on_save_post in bpy.app.handlers.save_post:
         bpy.app.handlers.save_post.remove(on_save_post)
-    
+
     del bpy.types.Scene.host_addr
     del bpy.types.Scene.host_port
     del bpy.types.Scene.socket_state
@@ -673,6 +978,8 @@ def unregister():
     bpy.utils.unregister_class(deleteObjectsBoth)
     bpy.utils.unregister_class(DEL_type_props)
     del bpy.types.Scene.DEL_type_props
+    bpy.utils.unregister_class(AddSliceView)
+    bpy.utils.unregister_class(ModalTimerOperator)
     
     handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
     if "export_to_slicer" in handlers:
