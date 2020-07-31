@@ -775,7 +775,7 @@ class StopSlicerLink(bpy.types.Operator):
 
 class AddSliceView(bpy.types.Operator):
     """
-    Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
+    Add slice operator inserts a plane and links it to 3D Slicer. Configures the 3D Slicer panel for additional config. input.
     """
     bl_idname = "link_slicer.add_slice_view"
     bl_label = "Add View"
@@ -785,29 +785,45 @@ class AddSliceView(bpy.types.Operator):
             for scene in bpy.data.scenes:
                 scene.render.engine = 'CYCLES'
                 scene.cycles.device = 'GPU'
-            sliceName=bpy.context.view_layer.objects.active.name
-            #send_obj_to_slicer([sliceName], "ViewLink")
 
-            #if bpy.data.objects.get(sliceName) is None:
-            #bpy.ops.mesh.primitive_plane_add(size=100, enter_editmode=True, align='WORLD', location=(0, 0, 0))
-            #bpy.ops.mesh.select_all(action='DESELECT')
-            #bpy.ops.object.editmode_toggle()
-            #bpy.data.objects.get(sliceName).name = sliceName
-            if not bpy.data.objects.get(sliceName).data.name == sliceName:
-                bpy.data.objects.get(sliceName).data.name = sliceName
-            bpy.ops.object.editmode_toggle()
-            bpy.ops.mesh.select_all(action='DESELECT')
-            bpy.ops.object.editmode_toggle()
-            #bpy.ops.object.select_all(action='DESELECT')
-            #bpy.context.view_layer.objects.active = bpy.data.objects.get(sliceName)
-            
-            
-            #send_obj_to_slicer([sliceName], "ViewLink")
-            #time.sleep(1)
-            asyncsock.socket_obj.sock_handler[0].send_data("SETUP_SLICE", sliceName)
-            
+            bpy.ops.object.select_all(action='DESELECT')
 
-            #bpy.data.collections['SlicerLink'].objects.unlink(plane)
+            if bpy.data.objects.get(context.scene.slice_name) is None:
+                bpy.ops.mesh.primitive_plane_add(size=100, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                bpy.ops.mesh.select_all(action='DESELECT')
+                bpy.ops.object.editmode_toggle()
+                bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name
+                bpy.data.objects.get(context.scene.slice_name).data.name = context.scene.slice_name
+            else:
+                ShowMessageBox("An object with this name exists. Sending to 3D Slicer.", "Slice View Info:")
+            
+            ob = bpy.data.objects.get(context.scene.slice_name)
+            TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
+            bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+            send_obj_to_slicer([context.scene.slice_name], "ViewLink")
+            time.sleep(0.1)
+            asyncsock.socket_obj.sock_handler[0].send_data("SETUP_SLICE", context.scene.slice_name)
+            
+        return {'FINISHED'}
+
+class DeleteSliceView(bpy.types.Operator):
+    """
+    Delete slice operator removes selected plane's texture image, material node, and object itself. Resets 3D Slicer UI Panel.
+    """
+    bl_idname = "link_slicer.delete_slice_view"
+    bl_label = "Delete View"
+    
+    def execute(self,context):
+        if asyncsock.socket_obj is not None:
+            for material in bpy.data.objects[context.view_layer.objects.active.name].data.materials:
+                if material.name in bpy.data.images.keys():
+                    bpy.data.images[material.name].user_clear()
+                    bpy.data.images.remove(bpy.data.images[material.name])
+                material.user_clear()
+                bpy.data.materials.remove(material)
+            asyncsock.socket_obj.sock_handler[0].send_data("DEL_SLICE", context.view_layer.objects.active.name)
+            bpy.context.scene.DEL_type_props.Mode = "Both"
+            bpy.ops.link_slicer.delete_objects_both("INVOKE_DEFAULT")
 
             
         return {'FINISHED'}
@@ -848,7 +864,8 @@ class SlicerLinkPanel(bpy.types.Panel):
             
         if context.scene.socket_state == "SERVER" or context.scene.socket_state == "CLIENT":
             row = layout.row()
-            row.label(text="Operators:")
+            row = layout.row()
+            row.label(text="Object Operators:")
 
             #row = layout.row()
             #row.operator("object.slicergroup")
@@ -868,9 +885,13 @@ class SlicerLinkPanel(bpy.types.Panel):
             #row = layout.row()
             #row.prop(context.scene, "delete_slicer")
             row = layout.row()
-            row.label(text="Slice Settings")
+            row = layout.row()
+            row.label(text="Slice View Operators:")
+            row = layout.row()
+            row.prop(context.scene, "slice_name")
             row.operator("link_slicer.add_slice_view")
-            #row = layout.row()
+            row = layout.row()
+            row.operator("link_slicer.delete_slice_view")
 
 class ModalTimerOperator(bpy.types.Operator):
     """Operator which runs its self from a timer"""
@@ -943,6 +964,9 @@ def register():
 
     bpy.types.Scene.overwrite = bpy.props.BoolProperty(name = "Overwrite", default = True, description = "If False, will add objects, if True, will replace entire group with selection")
 
+    bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "Transverse")
+    
+
     bpy.utils.register_class(SelectedtoSlicerGroup)
     bpy.utils.register_class(StopSlicerLink)
     bpy.utils.register_class(StartSlicerLinkServer)
@@ -954,6 +978,7 @@ def register():
     bpy.utils.register_class(DEL_type_props)
     bpy.types.Scene.DEL_type_props = bpy.props.PointerProperty(type=DEL_type_props)
     bpy.utils.register_class(AddSliceView)
+    bpy.utils.register_class(DeleteSliceView)
     bpy.utils.register_class(ModalTimerOperator)
     
 
@@ -969,6 +994,7 @@ def unregister():
     del bpy.types.Scene.host_port
     del bpy.types.Scene.socket_state
     del bpy.types.Scene.overwrite
+    del bpy.types.Scene.slice_name
 
     bpy.utils.unregister_class(SelectedtoSlicerGroup)
     bpy.utils.unregister_class(StopSlicerLink)
@@ -981,6 +1007,7 @@ def unregister():
     bpy.utils.unregister_class(DEL_type_props)
     del bpy.types.Scene.DEL_type_props
     bpy.utils.unregister_class(AddSliceView)
+    bpy.utils.unregister_class(DeleteSliceView)
     bpy.utils.unregister_class(ModalTimerOperator)
     
     handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]

@@ -70,7 +70,7 @@ class BlenderMonitorWidget:
         self.SlicerSelectedModelsList = []
         #self.toSync = []
         #slice list
-        self.sliceViewCache = []
+        self.sliceViewCache = {}
         self.workingVolume = None
         
     def setup(self):
@@ -81,13 +81,8 @@ class BlenderMonitorWidget:
         sampleCollapsibleButton.text = "Configuration:"
         self.layout.addWidget(sampleCollapsibleButton)
 
-        sliceViewSettings = ctk.ctkCollapsibleButton()
-        sliceViewSettings.text = "Slice View Settings:"
-        self.layout.addWidget(sliceViewSettings)
-
         # Layout within the sample collapsible button
         self.sampleFormLayout = qt.QFormLayout(sampleCollapsibleButton)
-        self.sliceViewLayout = qt.QFormLayout(sliceViewSettings)
 
         # Input volume node selector
         inputVolumeNodeSelector = slicer.qMRMLNodeComboBox()
@@ -264,7 +259,7 @@ class BlenderMonitorWidget:
                     self.SlicerSelectedModelsList[self.SlicerSelectedModelsList.index(model)][0] = modelNodeSelectorObj.GetName()
                     self.SlicerSelectedModelsList[self.SlicerSelectedModelsList.index(model)][2] = ""
 
-            slicer.util.confirmOkCancelDisplay("Checking object.", "linkSlicerBlender Info:")
+            #slicer.util.confirmOkCancelDisplay("Checking object.", "linkSlicerBlender Info:")
 
             model_name = modelNodeSelectorObj.GetName()
             self.sock.send_data("CHECK", "STATUS_BREAK_" + model_name)
@@ -472,19 +467,26 @@ class BlenderMonitorWidget:
     def add_slice_view(self, name):
 
         class sliceViewPanel():
-            def __init__(self, name, widgetClass, sliceViewLayout, parent):
+            def __init__(self, name, widgetClass, layout, parent):
                 self.widgetClass = widgetClass
-                self.sliceViewLayout = sliceViewLayout
+                #self.sliceViewLayout = sliceViewLayout
                 self.parent = parent
                 self.curvePoints = None
                 self.selectedView = None
                 self.plane_model = name
 
-                self.sliceSock = asyncsock.SlicerComm.EchoClient(str(self.widgetClass.host_address.text), int(self.widgetClass.host_port.text), [("XML", self.widgetClass.update_scene), ("OBJ", self.widgetClass.import_obj_from_blender), ("OBJ_MULTIPLE", self.widgetClass.import_multiple), ("CHECK", self.widgetClass.obj_check_handle), ("DEL", self.widgetClass.delete_model), ("SETUP_SLICE", self.widgetClass.add_slice_view)])
+                self.sliceSock = asyncsock.SlicerComm.EchoClient(str(self.widgetClass.host_address.text), int(self.widgetClass.host_port.text), [("XML", self.widgetClass.update_scene), ("OBJ", self.widgetClass.import_obj_from_blender), ("OBJ_MULTIPLE", self.widgetClass.import_multiple), ("CHECK", self.widgetClass.obj_check_handle), ("DEL", self.widgetClass.delete_model), ("SETUP_SLICE", self.widgetClass.add_slice_view), ("DEL_SLICE", self.widgetClass.delete_slice_view)])
                 
-                name_disp = qt.QLineEdit()
-                name_disp.setText(name)
-                self.sliceViewLayout.addRow("Slice:", name_disp)
+                sliceViewSettings = ctk.ctkCollapsibleButton()
+                sliceViewSettings.text = "Slice View Settings: " + name
+                layout.addWidget(sliceViewSettings)
+                self.sliceViewLayout = qt.QFormLayout(sliceViewSettings)
+                self.sliceViewSettings = sliceViewSettings
+                
+                #name_disp = qt.QLineEdit()
+                #name_disp.setText(name)
+                #self.name_disp = name_disp
+                #self.sliceViewLayout.addRow("Slice:", name_disp)
 
                 sliceNodeSelector = slicer.qMRMLNodeComboBox()
                 sliceNodeSelector.objectName = 'sliceNodeSelector'
@@ -500,6 +502,7 @@ class BlenderMonitorWidget:
 
                 self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)', sliceNodeSelector, 'setMRMLScene(vtkMRMLScene*)')
                 sliceNodeSelector.setMRMLScene(slicer.mrmlScene)
+                self.sliceNodeSelector = sliceNodeSelector
 
                 # Input fiducials node selector
                 inputFiducialsNodeSelector = slicer.qMRMLNodeComboBox()
@@ -515,6 +518,7 @@ class BlenderMonitorWidget:
                                     inputFiducialsNodeSelector, 'setMRMLScene(vtkMRMLScene*)')
 
                 inputFiducialsNodeSelector.setMRMLScene(slicer.mrmlScene)
+                self.inputFiducialsNodeSelector = inputFiducialsNodeSelector
                 
                 # Frame slider
                 self.frameSlider = ctk.ctkSliderWidget()
@@ -580,7 +584,6 @@ class BlenderMonitorWidget:
                         self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model))
                         self.widgetClass.slice_view_numpy(self.selectedView.GetName(), self.plane_model, self.sliceSock, mode="UPDATE")
                     except slicer.util.MRMLNodeNotFoundException: pass
-                    #time.sleep(0.65) #prevent scrolling too fast - issues w/ Blender crashing
                 else:
                     #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
                     pass
@@ -592,15 +595,25 @@ class BlenderMonitorWidget:
                     #self.plane_model = node.GetName()
                     self.widgetClass.slice_view_numpy(self.selectedView.GetName(), self.plane_model, self.sliceSock, mode="NEW")
 
-
             def curve_node(self, node):
                 if node is not None:
                     self.curvePoints = node.GetCurvePointsWorld()
                     self.frameSlider.maximum = self.curvePoints.GetNumberOfPoints()-2
                 else: pass
         
-        self.sliceViewCache.append(sliceViewPanel(name, self, self.sliceViewLayout, self.parent))
+        self.sliceViewCache[name] = sliceViewPanel(name, self, self.layout, self.parent)
         print(self.sliceViewCache)
+
+    def delete_slice_view(self, name):
+        self.sliceViewCache[name].sliceSock.handle_close()
+        #self.sliceViewCache[name].name_disp.deleteLater()
+        self.sliceViewCache[name].sliceNodeSelector.deleteLater()
+        self.sliceViewCache[name].inputFiducialsNodeSelector.deleteLater()
+        self.sliceViewCache[name].frameSlider.deleteLater()
+        self.sliceViewCache[name].sliceViewLayout.deleteLater()
+        self.sliceViewCache[name].sliceViewSettings.deleteLater()
+        del self.sliceViewCache[name]
+        #self.layout.update()
 
     def slice_view_numpy(self, sliceNodeID, modelName, socket, mode="NEW"):
         sliceNodeID = 'vtkMRMLSliceNode%s'%sliceNodeID
@@ -684,7 +697,7 @@ class BlenderMonitorWidget:
             self.watching = True
             self.playButton.text = "Stop"
             if self.sock == None:
-                self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address.text), int(self.host_port.text), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view)])
+                self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address.text), int(self.host_port.text), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view)])
                 #self.sock.send_data("TEST", 'bogus data from slicer!')
         else:
             self.watching = False
