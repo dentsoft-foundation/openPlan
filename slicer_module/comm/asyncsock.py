@@ -11,11 +11,22 @@
 
 import asyncore
 import queue
-import logging
+import logging, os
 import socket
-import threading #would multiprocessing be better?
+import threading #multiprocessing does not work well in blender
 import zlib
 import time
+from datetime import datetime
+
+
+class log():
+    def __init__(self, app):
+        logger = logging.getLogger(app)
+        hdlr = logging.FileHandler(os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", app+'_'+datetime.strftime(datetime.today() ,"%d_%m_%Y")+'.log'))
+        formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+        hdlr.setFormatter(formatter)
+        logger.addHandler(hdlr) 
+        logger.setLevel(logging.DEBUG)
 
 
 packet_terminator = '\nEND_TRANSMISSION\n\n'
@@ -32,7 +43,9 @@ class SlicerComm():
         """3D Slicer send and receive/handle data from TCP server via Qt event loop.
         """
         
-        def __init__(self, host, port, handle = None):
+        def __init__(self, host, port, handle = None, debug = False):
+            self.debug = debug
+            if self.debug == True: log("SLICER")
             from __main__ import qt
             self.received_data = [] #socket buffer
             self.write_buffer = ""
@@ -79,14 +92,15 @@ class SlicerComm():
             data = data.split(' net_packet: ')
             self.received_data = [] #empty buffer
             #print(data[1])
-            #try:
-            data[1] = eval(str(data[1]))
-            data[1] = zlib.decompress(data[1]).decode()
-            print(data[0])
-            if data[0] in self.cmd_ops: self.cmd_ops[data[0]](data[1]) #call stored function, pass stored arguments from tuple
-            elif data[0] in self.cmd_ops and len(data) > 2: self.cmd_ops[data[0]][0](data[1], *self.cmd_ops[data[0]][1]) # call stored function this way if more args exist - not tested
-            else: pass
-            #except: pass
+            try:
+                data[1] = eval(str(data[1]))
+                data[1] = zlib.decompress(data[1]).decode()
+                print(data[0])
+                if data[0] in self.cmd_ops: self.cmd_ops[data[0]](data[1]) #call stored function, pass stored arguments from tuple
+                elif data[0] in self.cmd_ops and len(data) > 2: self.cmd_ops[data[0]][0](data[1], *self.cmd_ops[data[0]][1]) # call stored function this way if more args exist - not tested
+                else: pass
+            except Exception as e:
+                if self.debug == True: logging.getLogger("SLICER").exception("Exception occurred") #dump tracestack
             return
 
         def send_data(self, cmd, data):
@@ -239,7 +253,8 @@ class BlenderComm():
                     self.instance.queue.put(data)
                 #elif data[0] in self.cmd_ops_client and len(data) > 2: self.cmd_ops_client[data[0]][0](data[1], *self.cmd_ops_client[data[0]][1])
                 else: pass
-            except: pass
+            except Exception as e:
+                if self.instance.debug == True: logging.getLogger("BLENDER").exception("Exception occurred") #dump tracestack
 
         def send_data(self, cmd, data):
             print("sent CMD: " + cmd)
@@ -248,7 +263,9 @@ class BlenderComm():
 
     class EchoServer(asyncore.dispatcher):
 
-        def __init__(self, host, port, cmd_handle = None):
+        def __init__(self, host, port, cmd_handle = None, config_clients = {}, debug = False):
+            self.debug = debug
+            if self.debug == True: log("BLENDER")
             asyncore.dispatcher.__init__(self)
             self.instance = self
             self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -260,6 +277,7 @@ class BlenderComm():
             if cmd_handle is not None: 
                 for CMD, handler in cmd_handle:
                     self.cmd_ops[CMD] = handler
+            self.config_clients = config_clients
             self.queue = queue.Queue()
 
         def handle_accepted(self, sock, addr):
@@ -267,6 +285,7 @@ class BlenderComm():
             self.sock_handler.append(BlenderComm.EchoHandler(sock))
             self.sock_handler[-1].init(self.instance, self.cmd_ops)
             self.sock_handler[-1].connected = True
+            self.sock_handler[-1].send_data("CONFIG_PARAMS", str(self.config_clients))
 
         def stop_server(self, socket_obj):
             for connected_client in socket_obj.sock_handler:

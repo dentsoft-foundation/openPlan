@@ -152,8 +152,39 @@ def import_obj_from_slicer(data):
 
     sg.objects.link(new_object)
     write_ob_transforms_to_cache(sg.objects)
+
+    #if bpy.data.objects[x_scene[0].get('name')].active_material is None:
+    material = bpy.data.materials.new(name=x_scene[0].get('name')+"_mat")
+    new_object.data.materials.append(material)
+    xml_mat = x_scene[0].find('material')
+    new_object.active_material.diffuse_color = (float(xml_mat[0].text), float(xml_mat[1].text), float(xml_mat[2].text), float(xml_mat[3].text))
+
     #new_object.data.transform(matrix)
     #new_object.data.update()
+
+def FILE_import_obj_from_slicer(data, group = 'SlicerLink'):
+    addons = bpy.context.preferences.addons
+    settings = addons['linkSlicerBlender'].preferences
+    handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
+    if "export_to_slicer" not in handlers:
+        bpy.app.handlers.depsgraph_update_post.append(export_to_slicer) 
+                    
+    if group not in bpy.data.collections:
+        sg = bpy.data.collections.new(group)
+    else:
+        sg = bpy.data.collections[group]
+
+    xml = data
+    tree = ElementTree(fromstring(xml))
+    x_scene = tree.getroot()
+    #we are expecting one object per packet from slicer, so no need to iterate the XML object tree
+    bpy.ops.import_mesh.ply(filepath=os.path.join(settings.tmp_dir, x_scene[0].get('name') + ".ply"))
+    bpy.context.scene.collection.objects.link(bpy.data.objects[x_scene[0].get('name')])
+
+    sg.objects.link(bpy.data.objects[x_scene[0].get('name')])
+    write_ob_transforms_to_cache(sg.objects)
+
+    os.remove(os.path.join(settings.tmp_dir, x_scene[0].get('name') + ".ply"))
 
 def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
     if asyncsock.socket_obj is not None:
@@ -175,22 +206,38 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
             me = ob.to_mesh(preserve_all_data_layers=False, depsgraph=None)
             #if me:
             #    return
+            if bpy.context.scene.legacy_sync == True and len(me.vertices) > bpy.context.scene.legacy_vertex_threshold:
+                addons = bpy.context.preferences.addons
+                settings = addons['linkSlicerBlender'].preferences
+                if not os.path.exists(settings.tmp_dir):
+                    print("Temp dir does not exist")
+                else:
+                    temp_file = os.path.join(settings.tmp_dir, ob.name + ".ply")
+                    ret = export_ply.save_mesh(temp_file, me,
+                            use_normals=False,
+                            use_uv_coords=False,
+                            use_colors=False,
+                            )
 
-            obj_verts = [list(v.co) for v in me.vertices]
-            tot_verts = len(obj_verts[0])
-            obj_poly = []
-            for poly in me.polygons:
-                obj_poly.append(tot_verts)
-                for v in poly.vertices:
-                    obj_poly.append(v)
-            x_scene = build_xml_scene([ob])
-        
-            xml_str = tostring(x_scene).decode() #, encoding='unicode', method='xml')
-            packet = "%s_POLYS_%s_XML_DATA_%s"%(obj_verts, obj_poly, xml_str)
+                    x_scene = build_xml_scene([ob])
+                    xml_str = tostring(x_scene).decode()
+                    asyncsock.socket_obj.sock_handler[0].send_data("FILE_OBJ", xml_str)
+            else:
+                obj_verts = [list(v.co) for v in me.vertices]
+                tot_verts = len(obj_verts[0])
+                obj_poly = []
+                for poly in me.polygons:
+                    obj_poly.append(tot_verts)
+                    for v in poly.vertices:
+                        obj_poly.append(v)
+                x_scene = build_xml_scene([ob])
+            
+                xml_str = tostring(x_scene).decode() #, encoding='unicode', method='xml')
+                packet = "%s_POLYS_%s_XML_DATA_%s"%(obj_verts, obj_poly, xml_str)
 
-            #ShowMessageBox("Sending object to Slicer.", "linkSlicerBlender Info:")
+                #ShowMessageBox("Sending object to Slicer.", "linkSlicerBlender Info:")
 
-            asyncsock.socket_obj.sock_handler[0].send_data("OBJ", packet)
+                asyncsock.socket_obj.sock_handler[0].send_data("OBJ", packet)
             ob.to_mesh_clear()
 
             if ob.name in sg.objects:
@@ -210,21 +257,39 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 if not me:
                     continue
 
-                obj_verts = [list(v.co) for v in me.vertices]
-                tot_verts = len(obj_verts[0])
-                obj_poly = []
-                for poly in me.polygons:
-                    obj_poly.append(tot_verts)
-                    for v in poly.vertices:
-                        obj_poly.append(v)
-                x_scene = build_xml_scene([ob])
-            
-                xml_str = tostring(x_scene).decode() #, encoding='unicode', method='xml')
-                packet = packet + "%s_POLYS_%s_XML_DATA_%s_N_OBJ_"%(obj_verts, obj_poly, xml_str)
+                
+                if bpy.context.scene.legacy_sync == True and len(me.vertices) > bpy.context.scene.legacy_vertex_threshold:
+                    addons = bpy.context.preferences.addons
+                    settings = addons['linkSlicerBlender'].preferences
+                    if not os.path.exists(settings.tmp_dir):
+                        print("Temp dir does not exist")
+                    else:
+                        temp_file = os.path.join(settings.tmp_dir, ob.name + ".ply")
+                        ret = export_ply.save_mesh(temp_file, me,
+                                use_normals=False,
+                                use_uv_coords=False,
+                                use_colors=False,
+                                )
 
-                #ShowMessageBox("Sending object to Slicer.", "linkSlicerBlender Info:")
+                        x_scene = build_xml_scene([ob])
+                        xml_str = tostring(x_scene).decode()
+                        packet = packet + "%s_XML_DATA_"%(xml_str)
+                else:
+                    obj_verts = [list(v.co) for v in me.vertices]
+                    tot_verts = len(obj_verts[0])
+                    obj_poly = []
+                    for poly in me.polygons:
+                        obj_poly.append(tot_verts)
+                        for v in poly.vertices:
+                            obj_poly.append(v)
+                    x_scene = build_xml_scene([ob])
+                
+                    xml_str = tostring(x_scene).decode() #, encoding='unicode', method='xml')
+                    packet = packet + "%s_POLYS_%s_XML_DATA_%s_N_OBJ_"%(obj_verts, obj_poly, xml_str)
 
-                #asyncsock.socket_obj.sock_handler[0].send_data("OBJ", packet)
+                    #ShowMessageBox("Sending object to Slicer.", "linkSlicerBlender Info:")
+
+                    #asyncsock.socket_obj.sock_handler[0].send_data("OBJ", packet)
                 ob.to_mesh_clear()
 
                 if ob.name in sg.objects:
@@ -232,7 +297,10 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 else:
                     sg.objects.link(ob)
 
-            asyncsock.socket_obj.sock_handler[0].send_data("OBJ_MULTIPLE", packet[:-len("_N_OBJ_")])
+            if bpy.context.scene.legacy_sync == False:
+                asyncsock.socket_obj.sock_handler[0].send_data("OBJ_MULTIPLE", packet[:-len("_N_OBJ_")])
+            elif bpy.context.scene.legacy_sync == True:
+                asyncsock.socket_obj.sock_handler[0].send_data("FILE_OBJ_MULTIPLE", packet[:-len("_XML_DATA_")])
 
         write_ob_transforms_to_cache(sg.objects)
 
@@ -332,6 +400,11 @@ def update_scene_blender(xml):
     my_matrix = Matrix(my_matrix)
     #print(my_matrix)
     bpy.data.objects[x_scene[0].get('name')].matrix_world = my_matrix
+    if bpy.data.objects[x_scene[0].get('name')].active_material is not None:
+        xml_mat = x_scene[0].find('material')
+        bpy.data.objects[x_scene[0].get('name')].active_material.diffuse_color = (float(xml_mat[0].text), float(xml_mat[1].text), float(xml_mat[2].text), float(xml_mat[3].text))
+
+
     dg = bpy.context.evaluated_depsgraph_get()
     dg.update()
 
@@ -624,7 +697,7 @@ class StartSlicerLinkServer(bpy.types.Operator):
     
     def execute(self,context):
         if asyncsock.socket_obj == None:
-            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update)])
+            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
             context.scene.socket_state = "SERVER"
 
@@ -828,6 +901,22 @@ class DeleteSliceView(bpy.types.Operator):
             
         return {'FINISHED'}
 
+class SlicerLinkPreferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+
+    self_dir = os.path.dirname(os.path.abspath(__file__))
+    tmp_dir = os.path.join(self_dir, "slicer_module", "tmp")
+    tmp_dir = bpy.props.StringProperty(name="Temp Folder", default=tmp_dir, subtype='DIR_PATH')
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row()
+        row.prop(context.scene, "debug_log")
+        row = layout.row()
+        row.prop(context.scene, "legacy_sync")
+        row.prop(context.scene, "legacy_vertex_threshold")
+        row = layout.row()
+        row.prop(self, "tmp_dir")
 
 class SlicerLinkPanel(bpy.types.Panel):
     """Panel for Slicer LInk"""
@@ -951,6 +1040,10 @@ def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
     bpy.context.window_manager.popup_menu(draw, title = title, icon = icon)
 
 def register():
+    bpy.types.Scene.debug_log = bpy.props.BoolProperty(name = "Debug Log", default = False, description = "If True, exception error from asyncsock command executioner on received packet will be logged.")
+    bpy.types.Scene.legacy_sync = bpy.props.BoolProperty(name = "File I/O Sync", default = False, description = "If True, large model objects will be exported and imported as files rather than copied over network I/O. Transforms and properties are still over network.")
+    bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=30000)
+
     if not on_load_new in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.append(on_load_new)
     if not on_save_pre in bpy.app.handlers.save_pre:
@@ -972,6 +1065,7 @@ def register():
     bpy.utils.register_class(StartSlicerLinkServer)
     bpy.utils.register_class(StartSlicerLinkClient)
     bpy.utils.register_class(SlicerLinkPanel)
+    bpy.utils.register_class(SlicerLinkPreferences)
     bpy.utils.register_class(linkObjectsToSlicer)
     bpy.utils.register_class(unlinkObjectsFromSlicer)
     bpy.utils.register_class(deleteObjectsBoth)
@@ -983,6 +1077,10 @@ def register():
     
 
 def unregister():
+    del bpy.types.Scene.debug_log
+    del bpy.types.Scene.legacy_sync
+    del bpy.types.Scene.legacy_vertex_threshold
+
     if on_load_new in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(on_load_new)
     if on_save_pre in bpy.app.handlers.save_pre:
@@ -1001,6 +1099,7 @@ def unregister():
     bpy.utils.unregister_class(StartSlicerLinkServer)
     bpy.utils.unregister_class(StartSlicerLinkClient)
     bpy.utils.unregister_class(SlicerLinkPanel)
+    bpy.utils.unregister_class(SlicerLinkPreferences)
     bpy.utils.unregister_class(linkObjectsToSlicer)
     bpy.utils.unregister_class(unlinkObjectsFromSlicer)
     bpy.utils.unregister_class(deleteObjectsBoth)

@@ -72,6 +72,11 @@ class BlenderMonitorWidget:
         #slice list
         self.sliceViewCache = {}
         self.workingVolume = None
+
+        self.legacy_sync = None #True
+        self.legacy_vertex_threshold = None #30000
+        self_dir = os.path.dirname(os.path.abspath(__file__))
+        self.tmp_dir = os.path.join(self_dir, "tmp")
         
     def setup(self):
         # Instantiate and connect widgets ...
@@ -105,6 +110,13 @@ class BlenderMonitorWidget:
         self.host_port.setText(str(asyncsock.address[1]))
         self.sampleFormLayout.addRow("Port:", self.host_port)
 
+        
+        self.log_debug = qt.QCheckBox()
+        #self.log_debug.setText("Debug: ")
+        self.log_debug.setChecked(False)
+        self.sampleFormLayout.addRow("Debug:", self.log_debug)
+        
+
         # connect button
         playButton = qt.QPushButton("Connect")
         playButton.toolTip = "Connect to configured server."
@@ -118,6 +130,47 @@ class BlenderMonitorWidget:
         addModelButton.toolTip = "Add a model to the list to sync with Blender."
         self.sampleFormLayout.addRow(addModelButton)
         addModelButton.connect('clicked()', self.onaddModelButtonToggled)
+
+        customLayoutId = 501
+        XML_layout = """
+        <layout type="vertical" split="true" >
+         <item splitSize="500">
+          <layout type="horizontal">
+           <item>
+            <view class="vtkMRMLSliceNode" singletontag="Red">
+             <property name="orientation" action="default">Axial</property>
+             <property name="viewlabel" action="default">R</property>
+             <property name="viewcolor" action="default">#F34A33</property>
+            </view>
+           </item>
+           <item>
+            <view class="vtkMRMLSliceNode" singletontag="Green">
+             <property name="orientation" action="default">Coronal</property>
+             <property name="viewlabel" action="default">G</property>
+             <property name="viewcolor" action="default">#6EB04B</property>
+            </view>
+           </item>
+           <item>
+            <view class="vtkMRMLSliceNode" singletontag="Yellow">
+             <property name="orientation" action="default">Sagittal</property>
+             <property name="viewlabel" action="default">Y</property>
+             <property name="viewcolor" action="default">#EDD54C</property>
+            </view>
+           </item>
+          </layout>
+         </item>
+         <item splitSize="500">
+          <view class="vtkMRMLSliceNode" singletontag="2D" verticalStretch="0">
+            <property name="orientation" action="default">Reformat</property>
+            <property name="viewlabel" action="default">P</property>
+            <property name="viewcolor" action="default">#000000</property>
+          </view>
+         </item>
+        </layout>
+        """
+        lm = slicer.app.layoutManager()
+        lm.layoutLogic().GetLayoutNode().AddLayoutDescription(customLayoutId, XML_layout)
+        lm.setLayout(customLayoutId)
 
     def onaddModelButtonToggled(self): #, select = None):
         for model in self.SlicerSelectedModelsList:
@@ -285,70 +338,91 @@ class BlenderMonitorWidget:
     def send_model_to_blender(self, modelNodeSelector):
         if not self.SlicerSelectedModelsList == []:
             modelNode = modelNodeSelector
-            if len(slicer.util.arrayFromModelPoints(modelNode).tolist()) > 300000: #this can be fine tuned, lower for speed, 300,000 is optimal for geo preserve
+
+            if self.legacy_sync == True and len(slicer.util.arrayFromModelPoints(modelNode).tolist()) > self.legacy_vertex_threshold:
+                print(modelNode.GetName())
+                modelDisplayNode = modelNode.GetDisplayNode()
+                triangles = vtk.vtkTriangleFilter()
+                triangles.SetInputConnection(modelDisplayNode.GetOutputPolyDataConnection())
+
+                plyWriter = vtk.vtkPLYWriter()
+                plyWriter.SetInputConnection(triangles.GetOutputPort())
+                lut = vtk.vtkLookupTable()
+                #lut.DeepCopy(modelDisplayNode.GetColorNode().GetLookupTable()) #color
+                lut.SetRange(modelDisplayNode.GetScalarRange())
+                plyWriter.SetLookupTable(lut)
+                plyWriter.SetArrayName(modelDisplayNode.GetActiveScalarName())
+
+                plyWriter.SetFileName(os.path.join(self.tmp_dir, modelNode.GetName()+".ply"))
+                plyWriter.Write()
+                #time.sleep(5)
+                self.sock.send_data("FILE_OBJ", tostring(self.build_xml_scene(modelNode.GetName())).decode())
+
+            else:
+                if len(slicer.util.arrayFromModelPoints(modelNode).tolist()) > 300000: #this can be fine tuned, lower for speed, 300,000 is optimal for geo preserve
+                    #print(len(slicer.util.arrayFromModelPoints(modelNode).tolist()))
+                    SFT_logic = SurfaceToolbox.SurfaceToolboxLogic()
+                    class state(object):
+                        processValue = ""
+                        parameterNode = SFT_logic.getParameterNode()
+                        inputParamFile = ""
+                        outputParamFile = ""
+                        inputModelNode = modelNode
+                        outputModelNode = modelNode
+                        decimation = True
+                        reduction = 0.95
+                        boundaryDeletion = True
+                        smoothing = False
+                        smoothingMethod = "Laplace"
+                        laplaceIterations = 300
+                        laplaceRelaxation = 0.5
+                        taubinIterations = 30
+                        taubinPassBand = 0.1
+                        boundarySmoothing = True
+                        normals = False
+                        flipNormals = False
+                        autoOrientNormals = False
+                        mirror = False
+                        mirrorX = False
+                        mirrorY = False
+                        mirrorZ = False
+                        splitting = False
+                        featureAngle = 30.0
+                        cleaner = False
+                        fillHoles = False
+                        fillHolesSize = 500.0
+                        connectivity = False
+                        scale = False
+                        scaleX = 0.5
+                        scaleY = 0.5
+                        scaleZ = 0.5
+                        translate = False
+                        transX = 0
+                        transY = 0
+                        transZ = 0
+                        relax = False
+                        relaxIterations = 0.95
+                        border = False
+                        origin = False
+                    
+                    def updateProcess(value):
+                        """Display changing process value"""
+                        return
+
+                    
+                    result = SFT_logic.applyFilters(state, updateProcess)
+                    slicer.app.processEvents()
+                #.currentNode()
                 #print(len(slicer.util.arrayFromModelPoints(modelNode).tolist()))
-                SFT_logic = SurfaceToolbox.SurfaceToolboxLogic()
-                class state(object):
-                    processValue = ""
-                    parameterNode = SFT_logic.getParameterNode()
-                    inputParamFile = ""
-                    outputParamFile = ""
-                    inputModelNode = modelNode
-                    outputModelNode = modelNode
-                    decimation = True
-                    reduction = 0.95
-                    boundaryDeletion = True
-                    smoothing = True
-                    smoothingMethod = "Laplace"
-                    laplaceIterations = 300
-                    laplaceRelaxation = 0.5
-                    taubinIterations = 30
-                    taubinPassBand = 0.1
-                    boundarySmoothing = True
-                    normals = False
-                    flipNormals = False
-                    autoOrientNormals = False
-                    mirror = False
-                    mirrorX = False
-                    mirrorY = False
-                    mirrorZ = False
-                    splitting = False
-                    featureAngle = 30.0
-                    cleaner = True
-                    fillHoles = True
-                    fillHolesSize = 500.0
-                    connectivity = True
-                    scale = False
-                    scaleX = 0.5
-                    scaleY = 0.5
-                    scaleZ = 0.5
-                    translate = False
-                    transX = 0
-                    transY = 0
-                    transZ = 0
-                    relax = True
-                    relaxIterations = 0.95
-                    border = False
-                    origin = False
-                
-                def updateProcess(value):
-                    """Display changing process value"""
-                    return
+                modelNode.CreateDefaultDisplayNodes()
+                model_points = str(slicer.util.arrayFromModelPoints(modelNode).tolist())
+                model_polys = str(self.arrayFromModelPolys(modelNode).tolist())
+                packet = "%s_POLYS_%s_XML_DATA_%s"%(model_points, model_polys, tostring(self.build_xml_scene(modelNode.GetName())).decode())
+                #print(model_polys)
+                #print(packet)
+                slicer.util.confirmOkCancelDisplay("Sending object to Blender.", "linkSlicerBlender Info:")
 
-                
-                result = SFT_logic.applyFilters(state, updateProcess)
-                slicer.app.processEvents()
-            #.currentNode()
-            #print(len(slicer.util.arrayFromModelPoints(modelNode).tolist()))
-            modelNode.CreateDefaultDisplayNodes()
-            model_points = str(slicer.util.arrayFromModelPoints(modelNode).tolist())
-            model_polys = str(self.arrayFromModelPolys(modelNode).tolist())
-            packet = "%s_POLYS_%s_XML_DATA_%s"%(model_points, model_polys, tostring(self.build_xml_scene(modelNode.GetName())).decode())
-            #print(model_polys)
-            #print(packet)
-            slicer.util.confirmOkCancelDisplay("Sending object to Blender.", "linkSlicerBlender Info:")
-
-            self.sock.send_data("OBJ", packet)
+                self.sock.send_data("OBJ", packet)
 
     def arrayFromModelPolys(self, modelNode):
         """Return point positions of a model node as numpy array.
@@ -363,6 +437,23 @@ class BlenderMonitorWidget:
         narray = vtk.util.numpy_support.vtk_to_numpy(pointData)
         return narray
 
+    def material_to_xml_element(self, nodeName):
+        rgb_color = slicer.util.getNode(nodeName).GetDisplayNode().GetColor()
+        alpha = slicer.util.getNode(nodeName).GetDisplayNode().GetOpacity()
+
+        xml_mat = Element('material')
+
+        r = SubElement(xml_mat, 'r')
+        r.text = str(round(rgb_color[0],4))
+        g = SubElement(xml_mat, 'g')
+        g.text = str(round(rgb_color[1],4))
+        b = SubElement(xml_mat, 'b')
+        b.text = str(round(rgb_color[2],4))
+        a = SubElement(xml_mat, 'a')
+        a.text = str(round(alpha,2))
+        
+        return xml_mat
+    
     def matrix_to_xml_element(self, mx):
         nrow = len(mx)
         ncol = len(mx[0])
@@ -407,6 +498,9 @@ class BlenderMonitorWidget:
             my_matrix = transform.GetMatrixTransformToParent()
             xmlmx = self.matrix_to_xml_element(slicer.util.arrayFromVTKMatrix(my_matrix))
             xob.extend([xmlmx])
+
+            xmlmat = self.material_to_xml_element(nodeName)
+            xob.extend([xmlmat])
                         
         return x_scene
 
@@ -414,6 +508,11 @@ class BlenderMonitorWidget:
         objects = data.split("_N_OBJ_")
         for obj in objects:
             self.import_obj_from_blender(obj)
+
+    def FILE_import_multiple(self, data):
+        objects = data.split("_XML_DATA_")
+        for object_xml in objects:
+            self.FILE_import_obj_from_blender(object_xml)
 
     def import_obj_from_blender(self, data):
         #slicer.util.confirmOkCancelDisplay("Received object(s) from Blender.", "linkSlicerBlender Info:")
@@ -464,6 +563,30 @@ class BlenderMonitorWidget:
 
         #TODO: apply the incoming xml matrix data to the newly imported object right away, dont wait for the event from blender
 
+    def FILE_import_obj_from_blender(self, data):
+        tree = ET.ElementTree(ET.fromstring(data))
+        x_scene = tree.getroot()
+        ply_reader = vtk.vtkPLYReader()
+        ply_reader.SetFileName(os.path.join(self.tmp_dir, x_scene[0].get('name')+".ply"))
+        ply_reader.Update()
+        polydata = ply_reader.GetOutput()
+        modelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode')
+        modelNode.SetName(x_scene[0].get('name')) #only expecting one obj in the xml, since sent w/ OBJ together
+        modelNode.SetAndObservePolyData(polydata)
+        modelNode.CreateDefaultDisplayNodes()
+        modelNode.GetDisplayNode().SetSliceIntersectionVisibility(True)
+        modelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
+
+        self.update_scene(data)
+
+        os.remove(os.path.join(self.tmp_dir, x_scene[0].get('name') + ".ply"))
+
+    def blender_config_params(self, data):
+        params = eval(data)
+        self.legacy_sync = params["legacy_sync"]
+        self.legacy_vertex_threshold = params["legacy_vertex_threshold"]
+        #self.tmp_dir = params["tmp_dir"]
+
     def add_slice_view(self, name):
 
         class sliceViewPanel():
@@ -472,6 +595,7 @@ class BlenderMonitorWidget:
                 #self.sliceViewLayout = sliceViewLayout
                 self.parent = parent
                 self.curvePoints = None
+                self.curveNode = None
                 self.selectedView = None
                 self.plane_model = name
 
@@ -526,6 +650,37 @@ class BlenderMonitorWidget:
                 self.frameSlider.decimals = 0
                 self.sliceViewLayout.addRow("Position:", self.frameSlider)
 
+                label = qt.QLabel()
+                label.text = ""
+                self.sliceViewLayout.addRow("Pantomograph ROI", label)
+
+                self.pano_x = qt.QLineEdit()
+                self.pano_x.setText(self.widgetClass.workingVolume.GetImageData().GetDimensions()[2]*self.widgetClass.workingVolume.GetSpacing()[2])
+                self.pano_y = qt.QLineEdit()
+                self.pano_y.setText(20)
+                self.sliceViewLayout.addRow("Slice Height (mm):", self.pano_x)
+                self.sliceViewLayout.addRow("Slice Width (mm):", self.pano_y)
+
+                self.normal_angle = ctk.ctkSliderWidget()
+                self.normal_angle.connect('valueChanged(double)', self.rotate_normal)
+                self.normal_angle.decimals = 0.0
+                self.normal_angle.singleStep = 25
+                self.normal_angle.minimum = 0
+                self.normal_angle.maximum = 360
+                self.sliceViewLayout.addRow("View Angle:", self.normal_angle)
+
+                # Build Pantomograph button
+                PantomographButton = qt.QPushButton("Show Pantomograph")
+                PantomographButton.toolTip = "Show pantomograph from selected curve path."
+                self.sliceViewLayout.addRow(PantomographButton)
+                PantomographButton.connect('clicked()', self.onPantomographButtonToggled)
+
+                # Flip pantomographs vertical button
+                flipVPanButton = qt.QPushButton("Rotate Pantomograph")
+                flipVPanButton.toolTip = "Flip pantomograph."
+                self.sliceViewLayout.addRow(flipVPanButton)
+                flipVPanButton.connect('clicked()', self.onflipVPanButtonToggled)
+
             def reslice_on_path(self, p0, pN, viewNode, planeNode, aspectRatio = None, rotateZ = None):
                 #print(viewNode)
                 fx=np.poly1d(np.polyfit([p0[0],pN[0]],[p0[1],pN[1]], 1))
@@ -562,8 +717,8 @@ class BlenderMonitorWidget:
                     transform.RotateY(rotateZ)
                     sliceToRas.DeepCopy(transform.GetMatrix())
                     sliceNode.UpdateMatrices()
-                    sliceNode.Modified()
-
+                
+                sliceNode.Modified()
                 
                 transform = slicer.util.getNode(planeNode.GetName()+'_trans')
                 #transform.SetMatrix(sliceNode.GetSliceToRAS())
@@ -588,6 +743,23 @@ class BlenderMonitorWidget:
                     #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
                     pass
 
+            def rotate_normal(self, angle):
+                if self.curvePoints is not None:
+                    # clear volumes
+                    try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("straightenedVolume"))
+                    except slicer.util.MRMLNodeNotFoundException: pass
+                    try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("projectedVolume"))
+                    except slicer.util.MRMLNodeNotFoundException: pass
+
+                    self.widgetClass.straightenVolume(slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "straightenedVolume"), self.curveNode, self.widgetClass.workingVolume, [float(self.pano_x.text), float(self.pano_y.text)], [0.5,0.5,0.5], rotationAngleDeg=angle)
+                    self.widgetClass.projectVolume(slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "projectedVolume"), slicer.util.getNode("straightenedVolume"), projectionAxisIndex = 1)
+
+                    panoNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNode2D')
+                    panoNode.SetOrientationToCoronal()
+                    appLogic = slicer.app.applicationLogic()
+                    sliceLogic = appLogic.GetSliceLogic(panoNode)
+                    sliceLogic.GetSliceCompositeNode().SetBackgroundVolumeID(slicer.util.getNode("projectedVolume").GetID())
+
             def view_node(self, node):
                 #print(node)
                 if node is not None:
@@ -597,9 +769,37 @@ class BlenderMonitorWidget:
 
             def curve_node(self, node):
                 if node is not None:
+                    self.curveNode = node
                     self.curvePoints = node.GetCurvePointsWorld()
                     self.frameSlider.maximum = self.curvePoints.GetNumberOfPoints()-2
                 else: pass
+
+            def onPantomographButtonToggled(self):
+                # clear volumes
+                try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("straightenedVolume"))
+                except slicer.util.MRMLNodeNotFoundException: pass
+                try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("projectedVolume"))
+                except slicer.util.MRMLNodeNotFoundException: pass
+
+                self.widgetClass.straightenVolume(slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "straightenedVolume"), self.curveNode, self.widgetClass.workingVolume, [float(self.pano_x.text), float(self.pano_y.text)], [0.5,0.5,0.5], rotationAngleDeg=0.0)
+                self.widgetClass.projectVolume(slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "projectedVolume"), slicer.util.getNode("straightenedVolume"), projectionAxisIndex = 1)
+
+                panoNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNode2D')
+                panoNode.SetOrientationToCoronal()
+                appLogic = slicer.app.applicationLogic()
+                sliceLogic = appLogic.GetSliceLogic(panoNode)
+                sliceLogic.GetSliceCompositeNode().SetBackgroundVolumeID(slicer.util.getNode("projectedVolume").GetID())
+
+            def onflipVPanButtonToggled (self):
+                sliceNode = slicer.app.layoutManager().sliceWidget("2D").mrmlSliceNode()
+                sliceToRas = sliceNode.GetSliceToRAS()
+                transform = vtk.vtkTransform()
+                transform.SetMatrix(sliceToRas)
+                transform.RotateZ(90)
+                #transform.RotateX(180)
+                sliceToRas.DeepCopy(transform.GetMatrix())
+                sliceNode.UpdateMatrices()
+                sliceNode.Modified()
         
         self.sliceViewCache[name] = sliceViewPanel(name, self, self.layout, self.parent)
         print(self.sliceViewCache)
@@ -685,6 +885,123 @@ class BlenderMonitorWidget:
         if mode == "NEW": socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
         if mode == "UPDATE": socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
 
+    def straightenVolume(self, outputStraightenedVolume, curveNode, volumeNode, sliceSizeMm, outputSpacingMm, rotationAngleDeg=0.0):
+        """
+        Compute straightened volume (useful for example for visualization of curved vessels)
+        """
+        originalCurvePoints = curveNode.GetCurvePointsWorld()
+        sampledPoints = vtk.vtkPoints()
+        if not slicer.vtkMRMLMarkupsCurveNode.ResamplePoints(originalCurvePoints, sampledPoints, outputSpacingMm[2], False):
+            return False
+
+        sliceExtent = [int(sliceSizeMm[0]/outputSpacingMm[0]), int(sliceSizeMm[1]/outputSpacingMm[1])]
+        inputSpacing = volumeNode.GetSpacing()
+
+        lines = vtk.vtkCellArray()
+        lines.InsertNextCell(sampledPoints.GetNumberOfPoints())
+        for pointIndex in range(sampledPoints.GetNumberOfPoints()):
+            lines.InsertCellPoint(pointIndex)
+
+        
+        sampledCurvePoly = vtk.vtkPolyData()
+        sampledCurvePoly.SetPoints(sampledPoints)
+        sampledCurvePoly.SetLines(lines)
+
+        #print(sampledPoints.GetPoint(3))
+
+        # Get physical coordinates from voxel coordinates
+        volumeRasToIjkTransformMatrix = vtk.vtkMatrix4x4()
+        volumeNode.GetRASToIJKMatrix(volumeRasToIjkTransformMatrix)
+
+        transformWorldToVolumeRas = vtk.vtkMatrix4x4()
+        slicer.vtkMRMLTransformNode.GetMatrixTransformBetweenNodes(None, volumeNode.GetParentTransformNode(), transformWorldToVolumeRas)
+
+        transformWorldToIjk = vtk.vtkTransform()
+        transformWorldToIjk.Concatenate(transformWorldToVolumeRas)
+        transformWorldToIjk.Scale(inputSpacing)
+        transformWorldToIjk.Concatenate(volumeRasToIjkTransformMatrix)
+
+        transformPolydataWorldToIjk = vtk.vtkTransformPolyDataFilter()
+        transformPolydataWorldToIjk.SetInputData(sampledCurvePoly)
+        transformPolydataWorldToIjk.SetTransform(transformWorldToIjk)
+
+        reslicer = vtk.vtkSplineDrivenImageSlicer()
+        append = vtk.vtkImageAppend()
+
+        scaledImageData = vtk.vtkImageData()
+        scaledImageData.ShallowCopy(volumeNode.GetImageData())
+        scaledImageData.SetSpacing(inputSpacing)
+
+        reslicer.SetInputData(scaledImageData)
+        reslicer.SetPathConnection(transformPolydataWorldToIjk.GetOutputPort())
+        reslicer.SetSliceExtent(*sliceExtent)
+        reslicer.SetSliceSpacing(outputSpacingMm[0], outputSpacingMm[1])
+        reslicer.SetIncidence(vtk.vtkMath.RadiansFromDegrees(rotationAngleDeg))
+    
+        nbPoints = sampledPoints.GetNumberOfPoints()
+        for ptId in reversed(range(nbPoints)):
+            reslicer.SetOffsetPoint(ptId)
+            reslicer.Update()
+            tempSlice = vtk.vtkImageData()
+            tempSlice.DeepCopy(reslicer.GetOutput(0))
+            append.AddInputData(tempSlice)
+
+        append.SetAppendAxis(2)
+        append.Update()
+        straightenedVolumeImageData = append.GetOutput()
+        straightenedVolumeImageData.SetOrigin(0,0,0)
+        straightenedVolumeImageData.SetSpacing(1.0,1.0,1.0)
+
+        dims = straightenedVolumeImageData.GetDimensions()
+        ijkToRas = vtk.vtkMatrix4x4()
+        ijkToRas.SetElement(0, 0, 0.0)
+        ijkToRas.SetElement(1, 0, 0.0)
+        ijkToRas.SetElement(2, 0, -outputSpacingMm[0])
+        
+        ijkToRas.SetElement(0, 1, 0.0)
+        ijkToRas.SetElement(1, 1, outputSpacingMm[1])
+        ijkToRas.SetElement(2, 1, 0.0)
+
+        ijkToRas.SetElement(0, 2, outputSpacingMm[2])
+        ijkToRas.SetElement(1, 2, 0.0)
+        ijkToRas.SetElement(2, 2, 0.0)
+
+        outputStraightenedVolume.SetIJKToRASMatrix(ijkToRas)
+        outputStraightenedVolume.SetAndObserveImageData(straightenedVolumeImageData)
+        outputStraightenedVolume.CreateDefaultDisplayNodes()
+
+        return True
+
+    # adapted from the Curved Planar Reformat extension - Andras Lasso & Jean-Christophe Fillion-Robin
+    def projectVolume(self, outputProjectedVolume, inputStraightenedVolume, projectionAxisIndex = 1):
+        """Create panoramic volume by mean intensity projection along an axis of the straightened volume
+        """
+        projectedImageData = vtk.vtkImageData()
+        outputProjectedVolume.SetAndObserveImageData(projectedImageData)
+        straightenedImageData = inputStraightenedVolume.GetImageData()
+
+        outputImageDimensions = list(straightenedImageData.GetDimensions())
+        outputImageDimensions[projectionAxisIndex] = 1
+        projectedImageData.SetDimensions(outputImageDimensions)
+
+        projectedImageData.AllocateScalars(straightenedImageData.GetScalarType(), straightenedImageData.GetNumberOfScalarComponents())
+        outputProjectedVolumeArray = slicer.util.arrayFromVolume(outputProjectedVolume)
+        inputStraightenedVolumeArray = slicer.util.arrayFromVolume(inputStraightenedVolume)
+        
+        if projectionAxisIndex == 0:
+            outputProjectedVolumeArray[0, :, :] = inputStraightenedVolumeArray.mean(projectionAxisIndex)
+        else:
+            outputProjectedVolumeArray[:, 0, :] = inputStraightenedVolumeArray.mean(projectionAxisIndex)
+
+        slicer.util.arrayFromVolumeModified(outputProjectedVolume)
+        
+        ijkToRas = vtk.vtkMatrix4x4()
+        inputStraightenedVolume.GetIJKToRASMatrix(ijkToRas)
+        outputProjectedVolume.SetIJKToRASMatrix(ijkToRas)
+        outputProjectedVolume.CreateDefaultDisplayNodes()
+
+        return True
+
     def onbtn_select_volumeClicked(self, volumeNode):
         if volumeNode is not None:
             slicer.util.setSliceViewerLayers(background=volumeNode)
@@ -697,7 +1014,7 @@ class BlenderMonitorWidget:
             self.watching = True
             self.playButton.text = "Stop"
             if self.sock == None:
-                self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address.text), int(self.host_port.text), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view)])
+                self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address.text), int(self.host_port.text), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params)], self.log_debug.isChecked())
                 #self.sock.send_data("TEST", 'bogus data from slicer!')
         else:
             self.watching = False
