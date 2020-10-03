@@ -113,7 +113,7 @@ class BlenderMonitorWidget:
         
         self.log_debug = qt.QCheckBox()
         #self.log_debug.setText("Debug: ")
-        self.log_debug.setChecked(False)
+        self.log_debug.setChecked(True)
         self.sampleFormLayout.addRow("Debug:", self.log_debug)
         
 
@@ -224,6 +224,11 @@ class BlenderMonitorWidget:
                 transform = slicer.util.getNode(name+'_trans')
             except slicer.util.MRMLNodeNotFoundException:
                 transform = None
+
+            try:
+                pano_model_trans = slicer.util.getNode(name+'_pano_trans')
+            except slicer.util.MRMLNodeNotFoundException:
+                pano_model_trans = None
                 
             if not transform:
                 transform = slicer.vtkMRMLTransformNode()
@@ -242,6 +247,8 @@ class BlenderMonitorWidget:
             #update object location in scene
             transform.SetAndObserveMatrixTransformToParent(my_matrix)
 
+            if pano_model_trans: pano_model_trans.SetAndObserveMatrixTransformToParent(my_matrix)
+
             #update color
             if b_ob.find("material"):
                 mat_color = b_ob.find('material')
@@ -252,6 +259,7 @@ class BlenderMonitorWidget:
                 #modelDisplayNode.SetColor(float(mat_color.find('r').text), float(mat_color.find('g').text), float(mat_color.find('b').text))
                 #modelDisplayNode.SetOpacity(float(mat_color.find('a').text))
                 #slicer_model.AddAndObserveDisplayNodeID(modelDisplayNode.GetID())
+            
             #permanently apply transform - does not seem to work in live mode
             #logic = slicer.vtkSlicerTransformLogic()
             #logic.hardenTransform(slicer_model)
@@ -260,9 +268,10 @@ class BlenderMonitorWidget:
             #disp_node.SetSliceIntersectionVisibility(True)
             #disp_node.SetSliceIntersectionThickness(2)
 
-    def update_scene_blender(self, modelNode):
+    def update_scene_blender(self, modelNode, sock = None):
         #print(tostring(self.build_xml_scene(modelNode.GetName())).decode())
-        self.sock.send_data("XML", tostring(self.build_xml_scene(modelNode.GetName())).decode())
+        if sock == None: sock = self.sock
+        sock.send_data("XML", tostring(self.build_xml_scene(modelNode.GetName())).decode())
         #self.sock.send_data("CHECK", "UNLINK_BREAK_" + modelNode.GetName())
 
     def obj_check_handle(self, data):
@@ -334,10 +343,80 @@ class BlenderMonitorWidget:
         for model in obj_name:
             try: slicer.mrmlScene.RemoveNode(slicer.util.getNode(model))
             except: pass
+            try: slicer.mrmlScene.RemoveNode(slicer.util.getNode(model.GetName()+"_straightened"))
+            except: pass
 
     def send_model_to_blender(self, modelNodeSelector):
         if not self.SlicerSelectedModelsList == []:
             modelNode = modelNodeSelector
+
+            if len(slicer.util.arrayFromModelPoints(modelNode).tolist()) > 300000: #this can be fine tuned, lower for speed, 300,000 is optimal for geo preserve
+                #print(len(slicer.util.arrayFromModelPoints(modelNode).tolist()))
+                SFT_logic = SurfaceToolbox.SurfaceToolboxLogic()
+                
+                def setDefaultParameters(parameterNode):
+                    """
+                    Initialize parameter node with default settings.
+                    """
+                    defaultValues = [
+                    ("decimation", "true"),
+                    ("decimationReduction", "0.95"),
+                    ("decimationBoundaryDeletion", "true"),
+                    ("smoothing", "false"),
+                    ("smoothingMethod", "Laplace"),
+                    ("smoothingLaplaceIterations", "100"),
+                    ("smoothingLaplaceRelaxation", "0.5"),
+                    ("smoothingTaubinIterations", "30"),
+                    ("smoothingTaubinPassBand", "0.1"),
+                    ("smoothingBoundarySmoothing", "true"),
+                    ("normals", "false"),
+                    ("normalsAutoOrient", "false"),
+                    ("normalsFlip", "false"),
+                    ("normalsSplitting", "false"),
+                    ("normalsFeatureAngle", "30.0"),
+                    ("mirror", "false"),
+                    ("mirrorX", "false"),
+                    ("mirrorY", "false"),
+                    ("mirrorZ", "false"),
+                    ("cleaner", "false"),
+                    ("fillHoles", "false"),
+                    ("fillHolesSize", "1000.0"),
+                    ("connectivity", "false"),
+                    ("scale", "false"),
+                    ("scaleX", "0.5"),
+                    ("scaleY", "0.5"),
+                    ("scaleZ", "0.5"),
+                    ("translate", "false"),
+                    ("translateX", "0.0"),
+                    ("translateY", "0.0"),
+                    ("translateZ", "0.0"),
+                    ("relax", "false"),
+                    ("relaxIterations", "5"),
+                    ("bordersOut", "false"),
+                    ("translateCenterToOrigin", "false")
+                    ]
+                    for parameterName, defaultValue in defaultValues:
+                        if not parameterNode.GetParameter(parameterName):
+                            parameterNode.SetParameter(parameterName, defaultValue)
+
+                def updateProcess(value):
+                    """Display changing process value"""
+                    return
+
+                                
+                try: parameterNode = slicer.util.getNode("model_filter")
+                except slicer.util.MRMLNodeNotFoundException:
+                    parameterNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScriptedModuleNode")
+                    parameterNode.SetName("model_filter")
+
+                setDefaultParameters(parameterNode)
+                parameterNode.SetNodeReferenceID("inputModel", modelNode.GetID())
+                parameterNode.SetNodeReferenceID("outputModel", modelNode.GetID())
+
+                SFT_logic.updateProcessCallback = updateProcess
+                result = SFT_logic.applyFilters(parameterNode) #, updateProcess)
+                
+                slicer.app.processEvents()
 
             if self.legacy_sync == True and len(slicer.util.arrayFromModelPoints(modelNode).tolist()) > self.legacy_vertex_threshold:
                 print(modelNode.GetName())
@@ -359,59 +438,6 @@ class BlenderMonitorWidget:
                 self.sock.send_data("FILE_OBJ", tostring(self.build_xml_scene(modelNode.GetName())).decode())
 
             else:
-                if len(slicer.util.arrayFromModelPoints(modelNode).tolist()) > 300000: #this can be fine tuned, lower for speed, 300,000 is optimal for geo preserve
-                    #print(len(slicer.util.arrayFromModelPoints(modelNode).tolist()))
-                    SFT_logic = SurfaceToolbox.SurfaceToolboxLogic()
-                    class state(object):
-                        processValue = ""
-                        parameterNode = SFT_logic.getParameterNode()
-                        inputParamFile = ""
-                        outputParamFile = ""
-                        inputModelNode = modelNode
-                        outputModelNode = modelNode
-                        decimation = True
-                        reduction = 0.95
-                        boundaryDeletion = True
-                        smoothing = False
-                        smoothingMethod = "Laplace"
-                        laplaceIterations = 300
-                        laplaceRelaxation = 0.5
-                        taubinIterations = 30
-                        taubinPassBand = 0.1
-                        boundarySmoothing = True
-                        normals = False
-                        flipNormals = False
-                        autoOrientNormals = False
-                        mirror = False
-                        mirrorX = False
-                        mirrorY = False
-                        mirrorZ = False
-                        splitting = False
-                        featureAngle = 30.0
-                        cleaner = False
-                        fillHoles = False
-                        fillHolesSize = 500.0
-                        connectivity = False
-                        scale = False
-                        scaleX = 0.5
-                        scaleY = 0.5
-                        scaleZ = 0.5
-                        translate = False
-                        transX = 0
-                        transY = 0
-                        transZ = 0
-                        relax = False
-                        relaxIterations = 0.95
-                        border = False
-                        origin = False
-                    
-                    def updateProcess(value):
-                        """Display changing process value"""
-                        return
-
-                    
-                    result = SFT_logic.applyFilters(state, updateProcess)
-                    slicer.app.processEvents()
                 #.currentNode()
                 #print(len(slicer.util.arrayFromModelPoints(modelNode).tolist()))
                 modelNode.CreateDefaultDisplayNodes()
@@ -511,6 +537,8 @@ class BlenderMonitorWidget:
 
     def FILE_import_multiple(self, data):
         objects = data.split("_XML_DATA_")
+        print(data)
+        print(objects)
         for object_xml in objects:
             self.FILE_import_obj_from_blender(object_xml)
 
@@ -555,6 +583,12 @@ class BlenderMonitorWidget:
         modelNode.CreateDefaultDisplayNodes()
         modelNode.GetDisplayNode().SetSliceIntersectionVisibility(True)
         modelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
+        
+        if((bool(self.sliceViewCache)) and (x_scene[0].get('name') in [slice+"_transverse_slice" for slice in self.sliceViewCache.keys()] or x_scene[0].get('name') in [slice+"_tangential_slice" for slice in self.sliceViewCache.keys()])):
+            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
+        else:
+            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow'))
+
 
         #update object location in scene
         self.update_scene(xml)
@@ -577,6 +611,11 @@ class BlenderMonitorWidget:
         modelNode.GetDisplayNode().SetSliceIntersectionVisibility(True)
         modelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
 
+        if((bool(self.sliceViewCache)) and (x_scene[0].get('name') in [slice+"_transverse_slice" for slice in self.sliceViewCache.keys()] or x_scene[0].get('name') in [slice+"_tangential_slice" for slice in self.sliceViewCache.keys()])):
+            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
+        else:
+            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow'))
+
         self.update_scene(data)
 
         os.remove(os.path.join(self.tmp_dir, x_scene[0].get('name') + ".ply"))
@@ -596,8 +635,9 @@ class BlenderMonitorWidget:
                 self.parent = parent
                 self.curvePoints = None
                 self.curveNode = None
-                self.selectedView = None
+                #self.selectedView = None
                 self.plane_model = name
+                self.f = None
 
                 self.sliceSock = asyncsock.SlicerComm.EchoClient(str(self.widgetClass.host_address.text), int(self.widgetClass.host_port.text), [("XML", self.widgetClass.update_scene), ("OBJ", self.widgetClass.import_obj_from_blender), ("OBJ_MULTIPLE", self.widgetClass.import_multiple), ("CHECK", self.widgetClass.obj_check_handle), ("DEL", self.widgetClass.delete_model), ("SETUP_SLICE", self.widgetClass.add_slice_view), ("DEL_SLICE", self.widgetClass.delete_slice_view)])
                 
@@ -612,6 +652,7 @@ class BlenderMonitorWidget:
                 #self.name_disp = name_disp
                 #self.sliceViewLayout.addRow("Slice:", name_disp)
 
+                """
                 sliceNodeSelector = slicer.qMRMLNodeComboBox()
                 sliceNodeSelector.objectName = 'sliceNodeSelector'
                 sliceNodeSelector.toolTip = "Select a viewing slice."
@@ -627,6 +668,7 @@ class BlenderMonitorWidget:
                 self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)', sliceNodeSelector, 'setMRMLScene(vtkMRMLScene*)')
                 sliceNodeSelector.setMRMLScene(slicer.mrmlScene)
                 self.sliceNodeSelector = sliceNodeSelector
+                """
 
                 # Input fiducials node selector
                 inputFiducialsNodeSelector = slicer.qMRMLNodeComboBox()
@@ -646,42 +688,77 @@ class BlenderMonitorWidget:
                 
                 # Frame slider
                 self.frameSlider = ctk.ctkSliderWidget()
-                self.frameSlider.connect('valueChanged(double)', self.flyTo)
+                self.frameSlider.connect('valueChanged(double)', self.transverseStep)
                 self.frameSlider.decimals = 0
-                self.sliceViewLayout.addRow("Position:", self.frameSlider)
+                self.sliceViewLayout.addRow("Transverse:", self.frameSlider)
+
+                # Slice rotate slider
+                self.rotateView = ctk.ctkSliderWidget()
+                self.rotateView.connect('valueChanged(double)', self.tangentialAngle)
+                self.rotateView.decimals = 0
+                self.rotateView.maximum = 360
+                self.sliceViewLayout.addRow("Tangential:", self.rotateView)
 
                 label = qt.QLabel()
                 label.text = ""
                 self.sliceViewLayout.addRow("Pantomograph ROI", label)
 
+                self.curve_res = qt.QLineEdit()
+                self.curve_res.setText(1.0)
+                self.slice_res = qt.QLineEdit()
+                self.slice_res.setText(0.5)
+                self.sliceViewLayout.addRow("Curve Resolution:", self.curve_res)
+                self.sliceViewLayout.addRow("Slice Resolution:", self.slice_res)
+
                 self.pano_x = qt.QLineEdit()
-                self.pano_x.setText(self.widgetClass.workingVolume.GetImageData().GetDimensions()[2]*self.widgetClass.workingVolume.GetSpacing()[2])
+                self.pano_x.setText(100)
                 self.pano_y = qt.QLineEdit()
-                self.pano_y.setText(20)
+                self.pano_y.setText(25)
                 self.sliceViewLayout.addRow("Slice Height (mm):", self.pano_x)
                 self.sliceViewLayout.addRow("Slice Width (mm):", self.pano_y)
 
+                # Build Pantomograph button
+                self.PantomographButton = qt.QPushButton("Show Pantomograph")
+                self.PantomographButton.toolTip = "Show pantomograph from selected curve path."
+                self.sliceViewLayout.addRow(self.PantomographButton)
+                self.PantomographButton.connect('clicked()', self.onPantomographButtonToggled)
+
                 self.normal_angle = ctk.ctkSliderWidget()
                 self.normal_angle.connect('valueChanged(double)', self.rotate_normal)
-                self.normal_angle.decimals = 0.0
-                self.normal_angle.singleStep = 25
+                #self.normal_angle.decimals = 0.0
+                #self.normal_angle.singleStep = 1
                 self.normal_angle.minimum = 0
                 self.normal_angle.maximum = 360
                 self.sliceViewLayout.addRow("View Angle:", self.normal_angle)
 
-                # Build Pantomograph button
-                PantomographButton = qt.QPushButton("Show Pantomograph")
-                PantomographButton.toolTip = "Show pantomograph from selected curve path."
-                self.sliceViewLayout.addRow(PantomographButton)
-                PantomographButton.connect('clicked()', self.onPantomographButtonToggled)
+                slicer.util.getNode(self.plane_model + "_transverse_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',)) #('vtkMRMLViewNode1', 'vtkMRMLSliceNodeRed', 'vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow')
+                #slicer.util.getNode(self.plane_model + "_transverse_slice").GetDisplayNode().Modified()
+                slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
+                #slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().Modified()
+                
+                #self.widgetClass.slice_view_numpy("Green", self.plane_model + "_transverse", self.sliceSock, mode="NEW")
+                #self.sliceSock.send_data("SELECT_OBJ", self.plane_model + "_transverse")
+                #time.sleep(1)
+                
+                #self.widgetClass.slice_view_numpy("Yellow", self.plane_model + "_tangential", self.widgetClass.sock, mode="NEW")
+                #self.widgetClass.sock.send_data("SELECT_OBJ", self.plane_model + "_tangential")
 
-                # Flip pantomographs vertical button
-                flipVPanButton = qt.QPushButton("Rotate Pantomograph")
-                flipVPanButton.toolTip = "Flip pantomograph."
-                self.sliceViewLayout.addRow(flipVPanButton)
-                flipVPanButton.connect('clicked()', self.onflipVPanButtonToggled)
+            def get_slice_img_dims(self, sliceNodeID):
+                sliceNodeID = 'vtkMRMLSliceNode%s'%sliceNodeID
+                # Get image data from slice view
+                sliceNode = slicer.mrmlScene.GetNodeByID(sliceNodeID)
+                viewNodeID = sliceNodeID
+                cap = ScreenCapture.ScreenCaptureLogic()
+                view = cap.viewFromNode(slicer.mrmlScene.GetNodeByID(viewNodeID))
+                # Capture single view
+                rw = view.renderWindow()
+                wti = vtk.vtkWindowToImageFilter()
+                wti.SetInput(rw)
+                wti.Update()
+                capturedImage = wti.GetOutput()
+                return capturedImage.GetDimensions()
 
-            def reslice_on_path(self, p0, pN, viewNode, planeNode, aspectRatio = None, rotateZ = None):
+            def reslice_on_path(self, p0, pN, viewNode, planeNode, aspectRatio = None, rotateZ = None, rotateT = None):
                 #print(viewNode)
                 fx=np.poly1d(np.polyfit([p0[0],pN[0]],[p0[1],pN[1]], 1))
                 fdx = np.polyder(fx)
@@ -705,6 +782,7 @@ class BlenderMonitorWidget:
                     sliceNode.UpdateMatrices()
 
                 #rescaling dimensions to zoom in using slice node's aspect ratio
+                print(sliceNode.GetFieldOfView())
                 if aspectRatio is not None:
                     x = aspectRatio # lower number = zoom-in default 50, for pano ~10
                     y = x * sliceNode.GetFieldOfView()[1] / sliceNode.GetFieldOfView()[0]
@@ -715,6 +793,13 @@ class BlenderMonitorWidget:
                     transform = vtk.vtkTransform()
                     transform.SetMatrix(sliceToRas)
                     transform.RotateY(rotateZ)
+                    sliceToRas.DeepCopy(transform.GetMatrix())
+                    sliceNode.UpdateMatrices()
+
+                if rotateT is not None:
+                    transform = vtk.vtkTransform()
+                    transform.SetMatrix(sliceToRas)
+                    transform.RotateX(rotateT)
                     sliceToRas.DeepCopy(transform.GetMatrix())
                     sliceNode.UpdateMatrices()
                 
@@ -730,36 +815,38 @@ class BlenderMonitorWidget:
                 view = widget.sliceView()
                 view.forceRender()
             
-            def flyTo(self, f):
+            def transverseStep(self, f):
                 """ Apply the fth step in the path to the global camera"""
                 if self.curvePoints is not None:
-                    f = int(f)
-                    try:
-                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(f)), np.asarray(self.curvePoints.GetPoint(f+1)), self.selectedView.GetName(), slicer.util.getNode(self.plane_model), 35)
-                        self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model))
-                        self.widgetClass.slice_view_numpy(self.selectedView.GetName(), self.plane_model, self.sliceSock, mode="UPDATE")
-                    except slicer.util.MRMLNodeNotFoundException: pass
+                    self.f = int(f)
+                    #try:
+                    
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "Green", slicer.util.getNode(self.plane_model + "_transverse_slice"), int(self.get_slice_img_dims("Green")[0]/9))
+                    self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_transverse_slice"), self.widgetClass.sock)
+                    self.widgetClass.slice_view_numpy("Green", self.plane_model + "_transverse_slice", self.sliceSock, mode="UPDATE")
+                    #time.sleep(0.5)
+                    #self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "Yellow", slicer.util.getNode(self.plane_model + "_tangential"), 35, self.rotateView.value)
+                    #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential"), self.widgetClass.sock)
+                    #self.widgetClass.slice_view_numpy("Yellow", self.plane_model + "_tangential", self.sliceSock, mode="UPDATE")
+                    #self.tangentialAngle(self.rotateView.value)
+                    #except slicer.util.MRMLNodeNotFoundException: print("node not found")
                 else:
                     #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
                     pass
 
-            def rotate_normal(self, angle):
+            def tangentialAngle(self, angle):
+                """ Apply the fth step in the path to the global camera"""
                 if self.curvePoints is not None:
-                    # clear volumes
-                    try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("straightenedVolume"))
-                    except slicer.util.MRMLNodeNotFoundException: pass
-                    try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("projectedVolume"))
-                    except slicer.util.MRMLNodeNotFoundException: pass
+                    try:
+                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "Yellow", slicer.util.getNode(self.plane_model + "_tangential_slice"), int(self.get_slice_img_dims("Yellow")[0]/9), angle)
+                        self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential_slice"))
+                        self.widgetClass.slice_view_numpy("Yellow", self.plane_model + "_tangential_slice", self.sliceSock, mode="UPDATE")
+                    except slicer.util.MRMLNodeNotFoundException: print("node not found")
+                else:
+                    #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
+                    pass
 
-                    self.widgetClass.straightenVolume(slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "straightenedVolume"), self.curveNode, self.widgetClass.workingVolume, [float(self.pano_x.text), float(self.pano_y.text)], [0.5,0.5,0.5], rotationAngleDeg=angle)
-                    self.widgetClass.projectVolume(slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "projectedVolume"), slicer.util.getNode("straightenedVolume"), projectionAxisIndex = 1)
-
-                    panoNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNode2D')
-                    panoNode.SetOrientationToCoronal()
-                    appLogic = slicer.app.applicationLogic()
-                    sliceLogic = appLogic.GetSliceLogic(panoNode)
-                    sliceLogic.GetSliceCompositeNode().SetBackgroundVolumeID(slicer.util.getNode("projectedVolume").GetID())
-
+            """
             def view_node(self, node):
                 #print(node)
                 if node is not None:
@@ -767,36 +854,93 @@ class BlenderMonitorWidget:
                     #self.plane_model = node.GetName()
                     self.widgetClass.slice_view_numpy(self.selectedView.GetName(), self.plane_model, self.sliceSock, mode="NEW")
 
+            """
+
             def curve_node(self, node):
                 if node is not None:
                     self.curveNode = node
                     self.curvePoints = node.GetCurvePointsWorld()
                     self.frameSlider.maximum = self.curvePoints.GetNumberOfPoints()-2
+                    self.curveNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow'))
                 else: pass
 
             def onPantomographButtonToggled(self):
                 # clear volumes
-                try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("straightenedVolume"))
+                try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("straightening_transform"))
                 except slicer.util.MRMLNodeNotFoundException: pass
-                try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("projectedVolume"))
+                try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("straight_volume"))
                 except slicer.util.MRMLNodeNotFoundException: pass
 
-                self.widgetClass.straightenVolume(slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "straightenedVolume"), self.curveNode, self.widgetClass.workingVolume, [float(self.pano_x.text), float(self.pano_y.text)], [0.5,0.5,0.5], rotationAngleDeg=0.0)
-                self.widgetClass.projectVolume(slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "projectedVolume"), slicer.util.getNode("straightenedVolume"), projectionAxisIndex = 1)
+                straighteningTransformNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLTransformNode', 'straightening_transform')
+                straightenedVolumeNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLScalarVolumeNode', 'straight_volume')
+                self.widgetClass.computeStraighteningTransform(straighteningTransformNode, self.curveNode, [float(self.pano_y.text), float(self.pano_x.text)], float(self.curve_res.text))
+                self.widgetClass.straightenVolume(straightenedVolumeNode,  self.widgetClass.workingVolume, [float(self.slice_res.text), float(self.slice_res.text), float(self.curve_res.text)], straighteningTransformNode)
 
-                panoNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNode2D')
-                panoNode.SetOrientationToCoronal()
-                appLogic = slicer.app.applicationLogic()
-                sliceLogic = appLogic.GetSliceLogic(panoNode)
-                sliceLogic.GetSliceCompositeNode().SetBackgroundVolumeID(slicer.util.getNode("projectedVolume").GetID())
+                all_models = [slicer.mrmlScene.GetNthNodeByClass(h, "vtkMRMLModelNode") for h in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLModelNode"))]
+                straightned_models = []
+                working_models = []
 
-            def onflipVPanButtonToggled (self):
+                #nodeToClone = slicer.util.getNode("lower IO")
+                #try: slicer.mrmlScene.RemoveNode(slicer.util.getNode("lower IO_straightened"))
+                #except slicer.util.MRMLNodeNotFoundException: pass
+                # Clone the node
+                '''
+                shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+                itemIDToClone = shNode.GetItemByDataNode(nodeToClone)
+                clonedItemID = slicer.modules.subjecthierarchy.logic().CloneSubjectHierarchyItem(shNode, itemIDToClone)
+                clonedNode = shNode.GetItemDataNode(clonedItemID)
+                clonedNode.SetName(nodeToClone.GetName()+"_straightened")
+                clonedNode.GetDisplayNode().SetSliceIntersectionVisibility(True)
+                clonedNode.GetDisplayNode().SetSliceIntersectionThickness(2)
+                '''
+                for model in all_models:
+                    if "Slice" not in model.GetName():
+                        if "slice" not in model.GetName():
+                            if "_straightened" in model.GetName():
+                                straightned_models.append(model)
+                            else: working_models.append(model)
+
+                print([t.GetName() for t in straightned_models])
+                print([t.GetName() for t in working_models])
+
+                for m_straight in straightned_models:
+                    slicer.mrmlScene.RemoveNode(m_straight)
+                    slicer.mrmlScene.RemoveNode(slicer.util.getNode(m_straight.GetName()[:-len("_straightened")]+"_pano_trans"))
+
+                for model in working_models:
+                    #clone model
+                    shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+                    itemIDToClone = shNode.GetItemByDataNode(model)
+                    clonedItemID = slicer.modules.subjecthierarchy.logic().CloneSubjectHierarchyItem(shNode, itemIDToClone)
+                    clonedNode = shNode.GetItemDataNode(clonedItemID)
+                    clonedNode.SetName(model.GetName()+"_straightened")
+                    clonedNode.GetDisplayNode().SetSliceIntersectionVisibility(True)
+                    clonedNode.GetDisplayNode().SetSliceIntersectionThickness(2)
+                    #clone straightening transform
+                    #shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+                    itemIDToClone = shNode.GetItemByDataNode(slicer.util.getNode(model.GetName()+"_trans"))
+                    clonedItemID = slicer.modules.subjecthierarchy.logic().CloneSubjectHierarchyItem(shNode, itemIDToClone)
+                    clonedBlenderTrans = shNode.GetItemDataNode(clonedItemID)
+                    clonedBlenderTrans.SetName(model.GetName() + "_pano_trans")
+                    
+                    clonedBlenderTrans.SetAndObserveTransformNodeID(slicer.util.getNode("straightening_transform").GetID())
+                    #slicer.vtkSlicerTransformLogic().hardenTransform(clonedNode)
+                    
+                    clonedNode.SetAndObserveTransformNodeID(clonedBlenderTrans.GetID())
+                    clonedNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNode2D',)) #('vtkMRMLViewNode1', 'vtkMRMLSliceNodeRed', 'vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow')
+                #clonedNode.GetDisplayNode().Modified()
+
+                slicer.util.setSliceViewerLayers(background=self.widgetClass.workingVolume)
+                straight_viewNode = slicer.app.layoutManager().sliceWidget("2D").sliceLogic()
+                straight_viewNode.GetSliceCompositeNode().SetBackgroundVolumeID(slicer.util.getNode('straight_volume').GetID())
+
+            def rotate_normal(self, angle):
                 sliceNode = slicer.app.layoutManager().sliceWidget("2D").mrmlSliceNode()
                 sliceToRas = sliceNode.GetSliceToRAS()
                 transform = vtk.vtkTransform()
                 transform.SetMatrix(sliceToRas)
-                transform.RotateZ(90)
-                #transform.RotateX(180)
+                #transform.RotateZ(90)
+                transform.RotateX(1)
                 sliceToRas.DeepCopy(transform.GetMatrix())
                 sliceNode.UpdateMatrices()
                 sliceNode.Modified()
@@ -807,9 +951,16 @@ class BlenderMonitorWidget:
     def delete_slice_view(self, name):
         self.sliceViewCache[name].sliceSock.handle_close()
         #self.sliceViewCache[name].name_disp.deleteLater()
-        self.sliceViewCache[name].sliceNodeSelector.deleteLater()
+        #self.sliceViewCache[name].sliceNodeSelector.deleteLater()
         self.sliceViewCache[name].inputFiducialsNodeSelector.deleteLater()
         self.sliceViewCache[name].frameSlider.deleteLater()
+        self.sliceViewCache[name].rotateView.deleteLater()
+        self.sliceViewCache[name].curve_res.deleteLater()
+        self.sliceViewCache[name].slice_res.deleteLater()
+        self.sliceViewCache[name].pano_x.deleteLater()
+        self.sliceViewCache[name].pano_y.deleteLater()
+        self.sliceViewCache[name].PantomographButton.deleteLater()
+        self.sliceViewCache[name].normal_angle.deleteLater()
         self.sliceViewCache[name].sliceViewLayout.deleteLater()
         self.sliceViewCache[name].sliceViewSettings.deleteLater()
         del self.sliceViewCache[name]
@@ -879,128 +1030,156 @@ class BlenderMonitorWidget:
         a = vtk_to_numpy(sc)
         a = a.flatten().tolist()
         #print(capturedImage)
-        #print(capturedImage.GetDimensions())
+        print(capturedImage.GetDimensions())
+        print(imageSize)
         #image_w = capturedImage.GetDimensions()[0]
         #image_h = capturedImage.GetDimensions()[1]
         if mode == "NEW": socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
         if mode == "UPDATE": socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
 
-    def straightenVolume(self, outputStraightenedVolume, curveNode, volumeNode, sliceSizeMm, outputSpacingMm, rotationAngleDeg=0.0):
+    #https://github.com/PerkLab/SlicerSandbox/blob/master/CurvedPlanarReformat/CurvedPlanarReformat.py
+    def computeStraighteningTransform(self, transformToStraightenedNode, curveNode, sliceSizeMm, outputSpacingMm):
+        """
+        Compute straightened volume (useful for example for visualization of curved vessels)
+        resamplingCurveSpacingFactor: 
+        """
+        self.transformSpacingFactor = 5.0
+        # Create a temporary resampled curve
+        resamplingCurveSpacing = outputSpacingMm * self.transformSpacingFactor
+        originalCurvePoints = curveNode.GetCurvePointsWorld()
+        sampledPoints = vtk.vtkPoints()
+        if not slicer.vtkMRMLMarkupsCurveNode.ResamplePoints(originalCurvePoints, sampledPoints, resamplingCurveSpacing, False):
+            raise("Redampling curve failed")
+        resampledCurveNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsCurveNode", "CurvedPlanarReformat_resampled_curve_temp")
+        resampledCurveNode.SetNumberOfPointsPerInterpolatingSegment(1)
+        resampledCurveNode.SetCurveTypeToLinear()
+        resampledCurveNode.SetControlPointPositionsWorld(sampledPoints)
+        numberOfSlices = resampledCurveNode.GetNumberOfControlPoints()
+
+        # Z axis (from first curve point to last, this will be the straightened curve long axis)
+        curveStartPoint = np.zeros(3)
+        curveEndPoint = np.zeros(3)
+        resampledCurveNode.GetNthControlPointPositionWorld(0, curveStartPoint)
+        resampledCurveNode.GetNthControlPointPositionWorld(resampledCurveNode.GetNumberOfControlPoints()-1, curveEndPoint)
+        transformGridAxisZ = (curveEndPoint-curveStartPoint)/np.linalg.norm(curveEndPoint-curveStartPoint)
+    
+        # X axis = average X axis of curve, to minimize torsion (and so have a simple displacement field, which can be robustly inverted)
+        sumCurveAxisX_RAS = np.zeros(3)
+        for gridK in range(numberOfSlices):
+            curvePointToWorld = vtk.vtkMatrix4x4()
+            resampledCurveNode.GetCurvePointToWorldTransformAtPointIndex(resampledCurveNode.GetCurvePointIndexFromControlPointIndex(gridK), curvePointToWorld)
+            curvePointToWorldArray = slicer.util.arrayFromVTKMatrix(curvePointToWorld)
+            curveAxisX_RAS = curvePointToWorldArray[0:3, 0]
+            sumCurveAxisX_RAS += curveAxisX_RAS
+        meanCurveAxisX_RAS = sumCurveAxisX_RAS/np.linalg.norm(sumCurveAxisX_RAS)
+        transformGridAxisX = meanCurveAxisX_RAS
+
+        # Y axis
+        transformGridAxisY = np.cross(transformGridAxisZ, transformGridAxisX)
+        transformGridAxisY = transformGridAxisY/np.linalg.norm(transformGridAxisY)
+
+        # Make sure that X axis is orthogonal to Y and Z
+        transformGridAxisX = np.cross(transformGridAxisY, transformGridAxisZ)
+        transformGridAxisX = transformGridAxisX/np.linalg.norm(transformGridAxisX)
+
+        # Origin (makes the grid centered at the curve)
+        curveLength = resampledCurveNode.GetCurveLengthWorld()
+        curveNodePlane = vtk.vtkPlane()
+        slicer.modules.markups.logic().GetBestFitPlane(resampledCurveNode, curveNodePlane)
+        transformGridOrigin = np.array(curveNodePlane.GetOrigin())
+        transformGridOrigin -= transformGridAxisX * sliceSizeMm[0]/2.0
+        transformGridOrigin -= transformGridAxisY * sliceSizeMm[1]/2.0
+        transformGridOrigin -= transformGridAxisZ * curveLength/2.0
+
+        # Create grid transform
+        # Each corner of each slice is mapped from the original volume's reformatted slice
+        # to the straightened volume slice.
+        # The grid transform contains one vector at the corner of each slice.
+        # The transform is in the same space and orientation as the straightened volume.
+
+        gridDimensions = [2, 2, numberOfSlices]
+        gridSpacing = [sliceSizeMm[0], sliceSizeMm[1], resamplingCurveSpacing]
+        gridDirectionMatrixArray = np.eye(4)
+        gridDirectionMatrixArray[0:3, 0] = transformGridAxisX
+        gridDirectionMatrixArray[0:3, 1] = transformGridAxisY
+        gridDirectionMatrixArray[0:3, 2] = transformGridAxisZ
+        gridDirectionMatrix = slicer.util.vtkMatrixFromArray(gridDirectionMatrixArray)
+
+        gridImage = vtk.vtkImageData()
+        gridImage.SetOrigin(transformGridOrigin)
+        gridImage.SetDimensions(gridDimensions)
+        gridImage.SetSpacing(gridSpacing)
+        gridImage.AllocateScalars(vtk.VTK_DOUBLE, 3)
+        transform = slicer.vtkOrientedGridTransform()
+        transform.SetDisplacementGridData(gridImage)
+        transform.SetGridDirectionMatrix(gridDirectionMatrix)
+        transformToStraightenedNode.SetAndObserveTransformFromParent(transform)
+
+        # Compute displacements
+        transformDisplacements_RAS = slicer.util.arrayFromGridTransform(transformToStraightenedNode)
+        for gridK in range(gridDimensions[2]):
+            curvePointToWorld = vtk.vtkMatrix4x4()
+            resampledCurveNode.GetCurvePointToWorldTransformAtPointIndex(resampledCurveNode.GetCurvePointIndexFromControlPointIndex(gridK), curvePointToWorld)
+            curvePointToWorldArray = slicer.util.arrayFromVTKMatrix(curvePointToWorld)
+            curveAxisX_RAS = curvePointToWorldArray[0:3, 0]
+            curveAxisY_RAS = curvePointToWorldArray[0:3, 1]
+            curvePoint_RAS = curvePointToWorldArray[0:3, 3]
+            for gridJ in range(gridDimensions[1]):
+                for gridI in range(gridDimensions[0]):
+                    straightenedVolume_RAS = (transformGridOrigin
+                        + gridI*gridSpacing[0]*transformGridAxisX
+                        + gridJ*gridSpacing[1]*transformGridAxisY
+                        + gridK*gridSpacing[2]*transformGridAxisZ)
+                    inputVolume_RAS = (curvePoint_RAS
+                        + (gridI-0.5)*sliceSizeMm[0]*curveAxisX_RAS
+                        + (gridJ-0.5)*sliceSizeMm[1]*curveAxisY_RAS)
+                    transformDisplacements_RAS[gridK][gridJ][gridI] = inputVolume_RAS - straightenedVolume_RAS
+        slicer.util.arrayFromGridTransformModified(transformToStraightenedNode)
+
+        slicer.mrmlScene.RemoveNode(resampledCurveNode)  # delete temporary curve
+
+    def straightenVolume(self, outputStraightenedVolume, volumeNode, outputStraightenedVolumeSpacing, straighteningTransformNode):
         """
         Compute straightened volume (useful for example for visualization of curved vessels)
         """
-        originalCurvePoints = curveNode.GetCurvePointsWorld()
-        sampledPoints = vtk.vtkPoints()
-        if not slicer.vtkMRMLMarkupsCurveNode.ResamplePoints(originalCurvePoints, sampledPoints, outputSpacingMm[2], False):
-            return False
+        gridTransform = straighteningTransformNode.GetTransformFromParentAs("vtkOrientedGridTransform")
+        if not gridTransform:
+            raise ValueError("Straightening transform is expected to contain a vtkOrientedGridTransform form parent")
 
-        sliceExtent = [int(sliceSizeMm[0]/outputSpacingMm[0]), int(sliceSizeMm[1]/outputSpacingMm[1])]
-        inputSpacing = volumeNode.GetSpacing()
+        # Get transformation grid geometry
+        gridIjkToRasDirectionMatrix = gridTransform.GetGridDirectionMatrix()
+        gridTransformImage = gridTransform.GetDisplacementGrid()
+        gridOrigin = gridTransformImage.GetOrigin()
+        gridSpacing = gridTransformImage.GetSpacing()
+        gridDimensions = gridTransformImage.GetDimensions()
+        gridExtentMm = [gridSpacing[0]*(gridDimensions[0]-1), gridSpacing[1]*(gridDimensions[1]-1), gridSpacing[2]*(gridDimensions[2]-1)]
 
-        lines = vtk.vtkCellArray()
-        lines.InsertNextCell(sampledPoints.GetNumberOfPoints())
-        for pointIndex in range(sampledPoints.GetNumberOfPoints()):
-            lines.InsertCellPoint(pointIndex)
+        # Compute IJK to RAS matrix of output volume
+        # Get grid axis directions
+        straightenedVolumeIJKToRASArray = slicer.util.arrayFromVTKMatrix(gridIjkToRasDirectionMatrix)
+        # Apply scaling
+        straightenedVolumeIJKToRASArray = np.dot(straightenedVolumeIJKToRASArray, np.diag([outputStraightenedVolumeSpacing[0], outputStraightenedVolumeSpacing[1], outputStraightenedVolumeSpacing[2], 1]))
+        # Set origin
+        straightenedVolumeIJKToRASArray[0:3,3] = gridOrigin 
 
-        
-        sampledCurvePoly = vtk.vtkPolyData()
-        sampledCurvePoly.SetPoints(sampledPoints)
-        sampledCurvePoly.SetLines(lines)
+        outputStraightenedImageData = vtk.vtkImageData()
+        outputStraightenedImageData.SetExtent(0, int(gridExtentMm[0]/outputStraightenedVolumeSpacing[0])-1, 0, int(gridExtentMm[1]/outputStraightenedVolumeSpacing[1])-1, 0, int(gridExtentMm[2]/outputStraightenedVolumeSpacing[2])-1)
+        outputStraightenedImageData.AllocateScalars(volumeNode.GetImageData().GetScalarType(), volumeNode.GetImageData().GetNumberOfScalarComponents())
+        outputStraightenedVolume.SetAndObserveImageData(outputStraightenedImageData)
+        outputStraightenedVolume.SetIJKToRASMatrix(slicer.util.vtkMatrixFromArray(straightenedVolumeIJKToRASArray))
 
-        #print(sampledPoints.GetPoint(3))
+        # Resample input volume to straightened volume
+        parameters = {}
+        parameters["inputVolume"] = volumeNode.GetID()
+        parameters["outputVolume"] = outputStraightenedVolume.GetID()
+        parameters["referenceVolume"] = outputStraightenedVolume.GetID()
+        parameters["transformationFile"] = straighteningTransformNode.GetID()
+        resamplerModule = slicer.modules.resamplescalarvectordwivolume
+        parameterNode = slicer.cli.runSync(resamplerModule, None, parameters)
 
-        # Get physical coordinates from voxel coordinates
-        volumeRasToIjkTransformMatrix = vtk.vtkMatrix4x4()
-        volumeNode.GetRASToIJKMatrix(volumeRasToIjkTransformMatrix)
-
-        transformWorldToVolumeRas = vtk.vtkMatrix4x4()
-        slicer.vtkMRMLTransformNode.GetMatrixTransformBetweenNodes(None, volumeNode.GetParentTransformNode(), transformWorldToVolumeRas)
-
-        transformWorldToIjk = vtk.vtkTransform()
-        transformWorldToIjk.Concatenate(transformWorldToVolumeRas)
-        transformWorldToIjk.Scale(inputSpacing)
-        transformWorldToIjk.Concatenate(volumeRasToIjkTransformMatrix)
-
-        transformPolydataWorldToIjk = vtk.vtkTransformPolyDataFilter()
-        transformPolydataWorldToIjk.SetInputData(sampledCurvePoly)
-        transformPolydataWorldToIjk.SetTransform(transformWorldToIjk)
-
-        reslicer = vtk.vtkSplineDrivenImageSlicer()
-        append = vtk.vtkImageAppend()
-
-        scaledImageData = vtk.vtkImageData()
-        scaledImageData.ShallowCopy(volumeNode.GetImageData())
-        scaledImageData.SetSpacing(inputSpacing)
-
-        reslicer.SetInputData(scaledImageData)
-        reslicer.SetPathConnection(transformPolydataWorldToIjk.GetOutputPort())
-        reslicer.SetSliceExtent(*sliceExtent)
-        reslicer.SetSliceSpacing(outputSpacingMm[0], outputSpacingMm[1])
-        reslicer.SetIncidence(vtk.vtkMath.RadiansFromDegrees(rotationAngleDeg))
-    
-        nbPoints = sampledPoints.GetNumberOfPoints()
-        for ptId in reversed(range(nbPoints)):
-            reslicer.SetOffsetPoint(ptId)
-            reslicer.Update()
-            tempSlice = vtk.vtkImageData()
-            tempSlice.DeepCopy(reslicer.GetOutput(0))
-            append.AddInputData(tempSlice)
-
-        append.SetAppendAxis(2)
-        append.Update()
-        straightenedVolumeImageData = append.GetOutput()
-        straightenedVolumeImageData.SetOrigin(0,0,0)
-        straightenedVolumeImageData.SetSpacing(1.0,1.0,1.0)
-
-        dims = straightenedVolumeImageData.GetDimensions()
-        ijkToRas = vtk.vtkMatrix4x4()
-        ijkToRas.SetElement(0, 0, 0.0)
-        ijkToRas.SetElement(1, 0, 0.0)
-        ijkToRas.SetElement(2, 0, -outputSpacingMm[0])
-        
-        ijkToRas.SetElement(0, 1, 0.0)
-        ijkToRas.SetElement(1, 1, outputSpacingMm[1])
-        ijkToRas.SetElement(2, 1, 0.0)
-
-        ijkToRas.SetElement(0, 2, outputSpacingMm[2])
-        ijkToRas.SetElement(1, 2, 0.0)
-        ijkToRas.SetElement(2, 2, 0.0)
-
-        outputStraightenedVolume.SetIJKToRASMatrix(ijkToRas)
-        outputStraightenedVolume.SetAndObserveImageData(straightenedVolumeImageData)
         outputStraightenedVolume.CreateDefaultDisplayNodes()
-
-        return True
-
-    # adapted from the Curved Planar Reformat extension - Andras Lasso & Jean-Christophe Fillion-Robin
-    def projectVolume(self, outputProjectedVolume, inputStraightenedVolume, projectionAxisIndex = 1):
-        """Create panoramic volume by mean intensity projection along an axis of the straightened volume
-        """
-        projectedImageData = vtk.vtkImageData()
-        outputProjectedVolume.SetAndObserveImageData(projectedImageData)
-        straightenedImageData = inputStraightenedVolume.GetImageData()
-
-        outputImageDimensions = list(straightenedImageData.GetDimensions())
-        outputImageDimensions[projectionAxisIndex] = 1
-        projectedImageData.SetDimensions(outputImageDimensions)
-
-        projectedImageData.AllocateScalars(straightenedImageData.GetScalarType(), straightenedImageData.GetNumberOfScalarComponents())
-        outputProjectedVolumeArray = slicer.util.arrayFromVolume(outputProjectedVolume)
-        inputStraightenedVolumeArray = slicer.util.arrayFromVolume(inputStraightenedVolume)
-        
-        if projectionAxisIndex == 0:
-            outputProjectedVolumeArray[0, :, :] = inputStraightenedVolumeArray.mean(projectionAxisIndex)
-        else:
-            outputProjectedVolumeArray[:, 0, :] = inputStraightenedVolumeArray.mean(projectionAxisIndex)
-
-        slicer.util.arrayFromVolumeModified(outputProjectedVolume)
-        
-        ijkToRas = vtk.vtkMatrix4x4()
-        inputStraightenedVolume.GetIJKToRASMatrix(ijkToRas)
-        outputProjectedVolume.SetIJKToRASMatrix(ijkToRas)
-        outputProjectedVolume.CreateDefaultDisplayNodes()
-
-        return True
+        outputStraightenedVolume.GetDisplayNode().CopyContent(volumeNode.GetDisplayNode())
+        slicer.mrmlScene.RemoveNode(parameterNode)
 
     def onbtn_select_volumeClicked(self, volumeNode):
         if volumeNode is not None:

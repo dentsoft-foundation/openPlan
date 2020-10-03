@@ -117,6 +117,14 @@ def detect_transforms():
     if len(changed) == 0: return None
     return changed    
 
+def select_b_obj(modelName):
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.data.objects.get(modelName).select_set(True)
+    bpy.context.view_layer.objects.active = bpy.data.objects.get(modelName)
+    
+    bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+    
+
 def import_obj_from_slicer(data):
     #ShowMessageBox("Received object from Slicer.", "linkSlicerBlender Info:")
     obj, xml = data.split("_XML_DATA_")
@@ -697,7 +705,7 @@ class StartSlicerLinkServer(bpy.types.Operator):
     
     def execute(self,context):
         if asyncsock.socket_obj == None:
-            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
+            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
             context.scene.socket_state = "SERVER"
 
@@ -862,19 +870,42 @@ class AddSliceView(bpy.types.Operator):
             bpy.ops.object.select_all(action='DESELECT')
 
             if bpy.data.objects.get(context.scene.slice_name) is None:
-                bpy.ops.mesh.primitive_plane_add(size=100, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
                 bpy.ops.mesh.select_all(action='DESELECT')
                 bpy.ops.object.editmode_toggle()
-                bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name
-                bpy.data.objects.get(context.scene.slice_name).data.name = context.scene.slice_name
+                bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_transverse_slice"
+                bpy.data.objects.get(context.scene.slice_name + "_transverse_slice").data.name = context.scene.slice_name + "_transverse_slice"
+
+                ob = bpy.data.objects.get(context.scene.slice_name + "_transverse_slice")
+                TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
+                bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+
+                bpy.ops.object.select_all(action='DESELECT')
+
+                bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                bpy.ops.mesh.select_all(action='DESELECT')
+                bpy.ops.object.editmode_toggle()
+                bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_tangential_slice"
+                bpy.data.objects.get(context.scene.slice_name + "_tangential_slice").data.name = context.scene.slice_name + "_tangential_slice"
+
+                ob = bpy.data.objects.get(context.scene.slice_name + "_tangential_slice")
+                TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
+                bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+
+                bpy.ops.object.select_all(action='DESELECT')
+
+                #bpy.data.objects[context.scene.slice_name + "_transverse_slice"].hide_select = True
+                #bpy.data.objects[context.scene.slice_name + "_tangential_slice"].hide_select = True
+
             else:
                 ShowMessageBox("An object with this name exists. Sending to 3D Slicer.", "Slice View Info:")
             
-            ob = bpy.data.objects.get(context.scene.slice_name)
-            TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
-            bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
-            send_obj_to_slicer([context.scene.slice_name], "ViewLink")
-            time.sleep(0.1)
+            
+            send_obj_to_slicer([context.scene.slice_name + "_transverse_slice"], "ViewLink")
+            #time.sleep(2)
+            send_obj_to_slicer([context.scene.slice_name + "_tangential_slice"], "ViewLink")
+            time.sleep(1)
+            #bpy.ops.object.select_all(action='DESELECT')
             asyncsock.socket_obj.sock_handler[0].send_data("SETUP_SLICE", context.scene.slice_name)
             
         return {'FINISHED'}
@@ -888,15 +919,21 @@ class DeleteSliceView(bpy.types.Operator):
     
     def execute(self,context):
         if asyncsock.socket_obj is not None:
-            for material in bpy.data.objects[context.view_layer.objects.active.name].data.materials:
-                if material.name in bpy.data.images.keys():
-                    bpy.data.images[material.name].user_clear()
-                    bpy.data.images.remove(bpy.data.images[material.name])
-                material.user_clear()
-                bpy.data.materials.remove(material)
-            asyncsock.socket_obj.sock_handler[0].send_data("DEL_SLICE", context.view_layer.objects.active.name)
-            bpy.context.scene.DEL_type_props.Mode = "Both"
-            bpy.ops.link_slicer.delete_objects_both("INVOKE_DEFAULT")
+            if bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") is not None and bpy.data.objects.get(context.scene.slice_name + "_tangential_slice") is not None:
+                bpy.ops.object.select_all(action='DESELECT')
+                for slice in [context.scene.slice_name + "_transverse_slice", context.scene.slice_name + "_tangential_slice"]:
+                    for material in bpy.data.objects[slice].data.materials:
+                        if material.name in bpy.data.images.keys():
+                            bpy.data.images[material.name].user_clear()
+                            bpy.data.images.remove(bpy.data.images[material.name])
+                        material.user_clear()
+                        bpy.data.materials.remove(material)
+                    
+                    bpy.data.objects[slice].select_set(state=True)
+
+                bpy.context.scene.DEL_type_props.Mode = "Both"
+                bpy.ops.link_slicer.delete_objects_both("INVOKE_DEFAULT")
+                asyncsock.socket_obj.sock_handler[0].send_data("DEL_SLICE", context.scene.slice_name)
 
             
         return {'FINISHED'}
@@ -977,7 +1014,7 @@ class SlicerLinkPanel(bpy.types.Panel):
             row = layout.row()
             row.label(text="Slice View Operators:")
             row = layout.row()
-            row.prop(context.scene, "slice_name")
+            #row.prop(context.scene, "slice_name")
             row.operator("link_slicer.add_slice_view")
             row = layout.row()
             row.operator("link_slicer.delete_slice_view")
@@ -1040,8 +1077,8 @@ def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
     bpy.context.window_manager.popup_menu(draw, title = title, icon = icon)
 
 def register():
-    bpy.types.Scene.debug_log = bpy.props.BoolProperty(name = "Debug Log", default = False, description = "If True, exception error from asyncsock command executioner on received packet will be logged.")
-    bpy.types.Scene.legacy_sync = bpy.props.BoolProperty(name = "File I/O Sync", default = False, description = "If True, large model objects will be exported and imported as files rather than copied over network I/O. Transforms and properties are still over network.")
+    bpy.types.Scene.debug_log = bpy.props.BoolProperty(name = "Debug Log", default = True, description = "If True, exception error from asyncsock command executioner on received packet will be logged.")
+    bpy.types.Scene.legacy_sync = bpy.props.BoolProperty(name = "File I/O Sync", default = True, description = "If True, large model objects will be exported and imported as files rather than copied over network I/O. Transforms and properties are still over network.")
     bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=30000)
 
     if not on_load_new in bpy.app.handlers.load_pre:
@@ -1057,7 +1094,7 @@ def register():
 
     bpy.types.Scene.overwrite = bpy.props.BoolProperty(name = "Overwrite", default = True, description = "If False, will add objects, if True, will replace entire group with selection")
 
-    bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "Transverse")
+    bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view")
     
 
     bpy.utils.register_class(SelectedtoSlicerGroup)

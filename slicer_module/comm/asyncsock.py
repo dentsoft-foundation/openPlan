@@ -29,7 +29,7 @@ class log():
         logger.setLevel(logging.DEBUG)
 
 
-packet_terminator = '\nEND_TRANSMISSION\n\n'
+packet_terminator = '\nEND_TRANSMISSION\n\n\n'
 socket_obj = None
 thread = None
 address = ('127.0.0.1', 5959)
@@ -108,6 +108,7 @@ class SlicerComm():
             self.write_buffer = str.encode(cmd.upper() + " net_packet: " + data + packet_terminator)
             self.socket.write(self.write_buffer)
             self.write_buffer = ""
+            print("sending: "+ cmd.upper())
 
 class BlenderComm():
 
