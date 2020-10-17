@@ -19,7 +19,7 @@ http://blender.stackexchange.com/questions/14202/index-out-of-range-for-uilist-c
 
 '''
 bl_info = {
-    "name": "linkSlicerBlender",
+    "name": "openPlan",
     "author": "Patrick R. Moore, Georgi Talmazov",
     "version": (2, 0),
     "blender": (2, 80, 0),
@@ -126,7 +126,7 @@ def select_b_obj(modelName):
     
 
 def import_obj_from_slicer(data):
-    #ShowMessageBox("Received object from Slicer.", "linkSlicerBlender Info:")
+    #ShowMessageBox("Received object from Slicer.", "openPlan Info:")
     obj, xml = data.split("_XML_DATA_")
     obj_points, obj_polys = obj.split("_POLYS_")
     obj_points = eval(obj_points)
@@ -172,7 +172,7 @@ def import_obj_from_slicer(data):
 
 def FILE_import_obj_from_slicer(data, group = 'SlicerLink'):
     addons = bpy.context.preferences.addons
-    settings = addons['linkSlicerBlender'].preferences
+    settings = addons['openPlan'].preferences
     handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
     if "export_to_slicer" not in handlers:
         bpy.app.handlers.depsgraph_update_post.append(export_to_slicer) 
@@ -216,7 +216,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
             #    return
             if bpy.context.scene.legacy_sync == True and len(me.vertices) > bpy.context.scene.legacy_vertex_threshold:
                 addons = bpy.context.preferences.addons
-                settings = addons['linkSlicerBlender'].preferences
+                settings = addons['openPlan'].preferences
                 if not os.path.exists(settings.tmp_dir):
                     print("Temp dir does not exist")
                 else:
@@ -243,7 +243,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 xml_str = tostring(x_scene).decode() #, encoding='unicode', method='xml')
                 packet = "%s_POLYS_%s_XML_DATA_%s"%(obj_verts, obj_poly, xml_str)
 
-                #ShowMessageBox("Sending object to Slicer.", "linkSlicerBlender Info:")
+                #ShowMessageBox("Sending object to Slicer.", "openPlan Info:")
 
                 asyncsock.socket_obj.sock_handler[0].send_data("OBJ", packet)
             ob.to_mesh_clear()
@@ -268,7 +268,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 
                 if bpy.context.scene.legacy_sync == True and len(me.vertices) > bpy.context.scene.legacy_vertex_threshold:
                     addons = bpy.context.preferences.addons
-                    settings = addons['linkSlicerBlender'].preferences
+                    settings = addons['openPlan'].preferences
                     if not os.path.exists(settings.tmp_dir):
                         print("Temp dir does not exist")
                     else:
@@ -295,7 +295,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                     xml_str = tostring(x_scene).decode() #, encoding='unicode', method='xml')
                     packet = packet + "%s_POLYS_%s_XML_DATA_%s_N_OBJ_"%(obj_verts, obj_poly, xml_str)
 
-                    #ShowMessageBox("Sending object to Slicer.", "linkSlicerBlender Info:")
+                    #ShowMessageBox("Sending object to Slicer.", "openPlan Info:")
 
                     #asyncsock.socket_obj.sock_handler[0].send_data("OBJ", packet)
                 ob.to_mesh_clear()
@@ -315,7 +315,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
 def obj_check_handle(data):
     status, obj_name = data.split("_BREAK_")
     
-    #ShowMessageBox(status, "linkSlicerBlender Info:")
+    #ShowMessageBox(status, "openPlan Info:")
 
     handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
     if "export_to_slicer" not in handlers:
@@ -364,7 +364,7 @@ def obj_check_handle(data):
         write_ob_transforms_to_cache(sg.objects)
 
 def obj_check_send():
-    #ShowMessageBox("Checking object.", "linkSlicerBlender Info:")
+    #ShowMessageBox("Checking object.", "openPlan Info:")
 
     handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
     if "export_to_slicer" not in handlers:
@@ -714,7 +714,7 @@ class StartSlicerLinkServer(bpy.types.Operator):
             km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
             kmi = km.keymap_items.new('link_slicer.delete_objects_both', 'DEL', 'PRESS')
             bpy.ops.wm.modal_timer_operator("INVOKE_DEFAULT")
-            ShowMessageBox("Server started.", "linkSlicerBlender Info:")
+            ShowMessageBox("Server started.", "openPlan Info:")
         return {'FINISHED'}
 
 class StartSlicerLinkClient(bpy.types.Operator):
@@ -725,7 +725,7 @@ class StartSlicerLinkClient(bpy.types.Operator):
     bl_label = "Client"
     
     def execute(self,context):
-        ShowMessageBox("Client not yet available.", "linkSlicerBlender Info:")
+        ShowMessageBox("Client not yet available.", "openPlan Info:")
         return {'FINISHED'}
         if asyncsock.socket_obj == None:
             asyncsock.socket_obj = asyncsock.BlenderComm.EchoClient(context.scene.host_addr, int(context.scene.host_port))
