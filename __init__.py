@@ -20,9 +20,9 @@ http://blender.stackexchange.com/questions/14202/index-out-of-range-for-uilist-c
 '''
 bl_info = {
     "name": "openPlan",
-    "author": "Patrick R. Moore, Georgi Talmazov",
-    "version": (2, 0),
-    "blender": (2, 80, 0),
+    "author": "Georgi Talmazov, Patrick R. Moore",
+    "version": (2, 5),
+    "blender": (2, 83, 0),
     "location": "3D View -> UI SIDE PANEL",
     "description": "Blender and 3D Slicer sync add-on.",
     "warning": "",
@@ -172,7 +172,7 @@ def import_obj_from_slicer(data):
 
 def FILE_import_obj_from_slicer(data, group = 'SlicerLink'):
     addons = bpy.context.preferences.addons
-    settings = addons['openPlan'].preferences
+    settings = addons[__name__].preferences
     handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
     if "export_to_slicer" not in handlers:
         bpy.app.handlers.depsgraph_update_post.append(export_to_slicer) 
@@ -216,7 +216,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
             #    return
             if bpy.context.scene.legacy_sync == True and len(me.vertices) > bpy.context.scene.legacy_vertex_threshold:
                 addons = bpy.context.preferences.addons
-                settings = addons['openPlan'].preferences
+                settings = addons[__name__].preferences
                 if not os.path.exists(settings.tmp_dir):
                     print("Temp dir does not exist")
                 else:
@@ -268,7 +268,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 
                 if bpy.context.scene.legacy_sync == True and len(me.vertices) > bpy.context.scene.legacy_vertex_threshold:
                     addons = bpy.context.preferences.addons
-                    settings = addons['openPlan'].preferences
+                    settings = addons[__name__].preferences
                     if not os.path.exists(settings.tmp_dir):
                         print("Temp dir does not exist")
                     else:
@@ -957,11 +957,11 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
 
 class SlicerLinkPanel(bpy.types.Panel):
     """Panel for Slicer LInk"""
-    bl_label = "Slicer Link Panel"
+    bl_label = "openPlan Control Panel"
     bl_idname = "SCENE_PT_layout"
     bl_space_type = "VIEW_3D"
     bl_region_type = 'UI'
-    bl_category = "ODC"
+    bl_category = "openPlan"
     bl_context = ""
 
     def draw(self, context):
