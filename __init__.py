@@ -199,7 +199,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
         handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
         if "export_to_slicer" not in handlers:
             bpy.app.handlers.depsgraph_update_post.append(export_to_slicer) 
-                        
+            
         if group not in bpy.data.collections:
             sg = bpy.data.collections.new(group)
         else:
@@ -254,6 +254,10 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 sg.objects.link(ob)
 
         elif len(objects) > 1:
+            total_vertices = 0
+            for ob in objects: #[TODO] object group managment 
+                me = bpy.data.objects[ob].to_mesh(preserve_all_data_layers=False, depsgraph=None)
+                total_vertices += len(me.vertices)
             packet = ""
             for ob in objects: #[TODO] object group managment 
                 ob = bpy.data.objects[ob]
@@ -266,7 +270,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                     continue
 
                 
-                if bpy.context.scene.legacy_sync == True and len(me.vertices) > bpy.context.scene.legacy_vertex_threshold:
+                if bpy.context.scene.legacy_sync == True and total_vertices > bpy.context.scene.legacy_vertex_threshold:
                     addons = bpy.context.preferences.addons
                     settings = addons[__name__].preferences
                     if not os.path.exists(settings.tmp_dir):
@@ -715,6 +719,10 @@ class StartSlicerLinkServer(bpy.types.Operator):
             kmi = km.keymap_items.new('link_slicer.delete_objects_both', 'DEL', 'PRESS')
             bpy.ops.wm.modal_timer_operator("INVOKE_DEFAULT")
             ShowMessageBox("Server started.", "openPlan Info:")
+
+            for group in ['SlicerLink', "ViewLink"]:
+                if group not in bpy.data.collections:
+                    sg = bpy.data.collections.new(group)
         return {'FINISHED'}
 
 class StartSlicerLinkClient(bpy.types.Operator):
@@ -803,7 +811,7 @@ class deleteObjectsBoth(bpy.types.Operator):
         elif "3D Slicer" in del_mode:
             if not asyncsock.socket_obj == None:
                 packet = ""
-                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects]:
+                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects if ob.name not in bpy.data.collections.get("ViewLink").objects]:
                     #asyncsock.socket_obj.sock_handler[0].send_data("DEL", ob.name)
                     packet = packet + ob[1] + ","
                     if ob[1] in sg.objects: 
@@ -813,7 +821,7 @@ class deleteObjectsBoth(bpy.types.Operator):
         elif "Both" in del_mode:
             if not asyncsock.socket_obj == None:
                 packet = ""
-                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects]:
+                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects if ob.name not in bpy.data.collections.get("ViewLink").objects]:
                     #asyncsock.socket_obj.sock_handler[0].send_data("DEL", ob.name)
                     packet = packet + ob[1] + ","
                     if ob[1] in sg.objects: 
@@ -879,6 +887,7 @@ class AddSliceView(bpy.types.Operator):
                 ob = bpy.data.objects.get(context.scene.slice_name + "_transverse_slice")
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
                 bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+                #ob.hide_select = True # not possible b/c when resizing the plane we rely on being able to select it in order to reset the origin, when selection is disabled this cannot happen and plane is not centered appropriately
 
                 bpy.ops.object.select_all(action='DESELECT')
 
@@ -891,6 +900,7 @@ class AddSliceView(bpy.types.Operator):
                 ob = bpy.data.objects.get(context.scene.slice_name + "_tangential_slice")
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
                 bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+                #ob.hide_select = True
 
                 bpy.ops.object.select_all(action='DESELECT')
 
@@ -1079,7 +1089,7 @@ def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
 def register():
     bpy.types.Scene.debug_log = bpy.props.BoolProperty(name = "Debug Log", default = True, description = "If True, exception error from asyncsock command executioner on received packet will be logged.")
     bpy.types.Scene.legacy_sync = bpy.props.BoolProperty(name = "File I/O Sync", default = True, description = "If True, large model objects will be exported and imported as files rather than copied over network I/O. Transforms and properties are still over network.")
-    bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=30000)
+    bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=3000)
 
     if not on_load_new in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.append(on_load_new)
