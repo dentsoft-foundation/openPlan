@@ -160,11 +160,22 @@ class BlenderMonitorWidget:
           </layout>
          </item>
          <item splitSize="500">
-          <view class="vtkMRMLSliceNode" singletontag="2D" verticalStretch="0">
-            <property name="orientation" action="default">Reformat</property>
-            <property name="viewlabel" action="default">P</property>
-            <property name="viewcolor" action="default">#000000</property>
-          </view>
+          <layout type="horizontal">
+           <item>
+            <view class="vtkMRMLSliceNode" singletontag="2D" verticalStretch="0">
+             <property name="orientation" action="default">Reformat</property>
+             <property name="viewlabel" action="default">P</property>
+             <property name="viewcolor" action="default">#000000</property>
+            </view>
+           </item>
+           <item>
+            <view class="vtkMRMLSliceNode" singletontag="FreeView">
+             <property name="orientation" action="default">Axial</property>
+             <property name="viewlabel" action="default">F</property>
+             <property name="viewcolor" action="default">#EDD54C</property>
+            </view>
+           </item>
+          </layout>
          </item>
         </layout>
         """
@@ -331,7 +342,7 @@ class BlenderMonitorWidget:
                     self.sock.send_data("CHECK", "UNLINK_BREAK_" + model[0])
                     model[1].deleteLater()
                     self.SlicerSelectedModelsList.remove(model)
-                    print(self.SlicerSelectedModelsList)
+                    #print(self.SlicerSelectedModelsList)
                     return
 
     def delete_model(self, obj_name):
@@ -537,8 +548,8 @@ class BlenderMonitorWidget:
 
     def FILE_import_multiple(self, data):
         objects = data.split("_XML_DATA_")
-        print(data)
-        print(objects)
+        #print(data)
+        #print(objects)
         for object_xml in objects:
             self.FILE_import_obj_from_blender(object_xml)
 
@@ -587,7 +598,7 @@ class BlenderMonitorWidget:
         if((bool(self.sliceViewCache)) and (x_scene[0].get('name') in [slice+"_transverse_slice" for slice in self.sliceViewCache.keys()] or x_scene[0].get('name') in [slice+"_tangential_slice" for slice in self.sliceViewCache.keys()])):
             modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
         else:
-            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow'))
+            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow', "vtkMRMLSliceNodeFreeView"))
 
 
         #update object location in scene
@@ -614,7 +625,7 @@ class BlenderMonitorWidget:
         if((bool(self.sliceViewCache)) and (x_scene[0].get('name') in [slice+"_transverse_slice" for slice in self.sliceViewCache.keys()] or x_scene[0].get('name') in [slice+"_tangential_slice" for slice in self.sliceViewCache.keys()])):
             modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
         else:
-            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow'))
+            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow', "vtkMRMLSliceNodeFreeView"))
 
         self.update_scene(data)
 
@@ -638,6 +649,7 @@ class BlenderMonitorWidget:
                 #self.selectedView = None
                 self.plane_model = name
                 self.f = None
+                self.slider_event = False
 
                 self.sliceSock = asyncsock.SlicerComm.EchoClient(str(self.widgetClass.host_address.text), int(self.widgetClass.host_port.text), [("XML", self.widgetClass.update_scene), ("OBJ", self.widgetClass.import_obj_from_blender), ("OBJ_MULTIPLE", self.widgetClass.import_multiple), ("CHECK", self.widgetClass.obj_check_handle), ("DEL", self.widgetClass.delete_model), ("SETUP_SLICE", self.widgetClass.add_slice_view), ("DEL_SLICE", self.widgetClass.delete_slice_view)])
                 
@@ -699,6 +711,28 @@ class BlenderMonitorWidget:
                 self.rotateView.maximum = 360
                 self.sliceViewLayout.addRow("Tangential:", self.rotateView)
 
+                #Freeview slice sliders
+                freeviewCollapsibleButton = ctk.ctkCollapsibleButton()
+                freeviewCollapsibleButton.text = "Free View Controls"
+                freeviewCollapsibleButton.enabled = True #originally FALSE
+                layout.addWidget(freeviewCollapsibleButton)
+
+                # Layout within the Flythrough collapsible button
+                freeviewFormLayout = qt.QFormLayout(freeviewCollapsibleButton)
+                # Frame slider
+                self.fv_tan_slider = ctk.ctkSliderWidget()
+                self.fv_tan_slider.connect('valueChanged(double)', self.freeViewAngles)
+                self.fv_tan_slider.decimals = 0
+                self.fv_tan_slider.maximum = 360
+                freeviewFormLayout.addRow("Tangential Angle:", self.fv_tan_slider)
+
+                # Slice rotate slider
+                self.fv_ax_slider = ctk.ctkSliderWidget()
+                self.fv_ax_slider.connect('valueChanged(double)', self.freeViewAngles)
+                self.fv_ax_slider.decimals = 0
+                self.fv_ax_slider.maximum = 360
+                freeviewFormLayout.addRow("Axial Angle:", self.fv_ax_slider)
+
                 label = qt.QLabel()
                 label.text = ""
                 self.sliceViewLayout.addRow("Pantomograph ROI", label)
@@ -735,6 +769,7 @@ class BlenderMonitorWidget:
                 #slicer.util.getNode(self.plane_model + "_transverse_slice").GetDisplayNode().Modified()
                 slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
                 #slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().Modified()
+                slicer.util.getNode(self.plane_model + "_freeview_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
                 
                 #self.widgetClass.slice_view_numpy("Green", self.plane_model + "_transverse", self.sliceSock, mode="NEW")
                 #self.sliceSock.send_data("SELECT_OBJ", self.plane_model + "_transverse")
@@ -742,6 +777,9 @@ class BlenderMonitorWidget:
                 
                 #self.widgetClass.slice_view_numpy("Yellow", self.plane_model + "_tangential", self.widgetClass.sock, mode="NEW")
                 #self.widgetClass.sock.send_data("SELECT_OBJ", self.plane_model + "_tangential")
+
+                #for sliceNodeId in ['vtkMRMLSliceNodeRed', 'vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow', "vtkMRMLSliceNodeFreeView"]:
+                #    slicer.mrmlScene.GetNodeByID(sliceNodeId).AddObserver(vtk.vtkCommand.ModifiedEvent, self.sliceNodeTransform)
 
             def get_slice_img_dims(self, sliceNodeID):
                 sliceNodeID = 'vtkMRMLSliceNode%s'%sliceNodeID
@@ -782,7 +820,7 @@ class BlenderMonitorWidget:
                     sliceNode.UpdateMatrices()
 
                 #rescaling dimensions to zoom in using slice node's aspect ratio
-                print(sliceNode.GetFieldOfView())
+                #print(sliceNode.GetFieldOfView())
                 if aspectRatio is not None:
                     x = aspectRatio # lower number = zoom-in default 50, for pano ~10
                     y = x * sliceNode.GetFieldOfView()[1] / sliceNode.GetFieldOfView()[0]
@@ -816,7 +854,6 @@ class BlenderMonitorWidget:
                 view.forceRender()
             
             def transverseStep(self, f):
-                """ Apply the fth step in the path to the global camera"""
                 if self.curvePoints is not None:
                     self.f = int(f)
                     #try:
@@ -824,28 +861,46 @@ class BlenderMonitorWidget:
                     self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "Green", slicer.util.getNode(self.plane_model + "_transverse_slice"), int(self.get_slice_img_dims("Green")[0]/9))
                     self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_transverse_slice"), self.widgetClass.sock)
                     self.widgetClass.slice_view_numpy("Green", self.plane_model + "_transverse_slice", self.sliceSock, mode="UPDATE")
-                    #time.sleep(0.5)
-                    #self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "Yellow", slicer.util.getNode(self.plane_model + "_tangential"), 35, self.rotateView.value)
-                    #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential"), self.widgetClass.sock)
-                    #self.widgetClass.slice_view_numpy("Yellow", self.plane_model + "_tangential", self.sliceSock, mode="UPDATE")
-                    #self.tangentialAngle(self.rotateView.value)
-                    #except slicer.util.MRMLNodeNotFoundException: print("node not found")
                 else:
                     #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
                     pass
 
             def tangentialAngle(self, angle):
-                """ Apply the fth step in the path to the global camera"""
                 if self.curvePoints is not None:
                     try:
                         self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "Yellow", slicer.util.getNode(self.plane_model + "_tangential_slice"), int(self.get_slice_img_dims("Yellow")[0]/9), angle)
-                        self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential_slice"))
+                        self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential_slice"), self.widgetClass.sock)
                         self.widgetClass.slice_view_numpy("Yellow", self.plane_model + "_tangential_slice", self.sliceSock, mode="UPDATE")
                     except slicer.util.MRMLNodeNotFoundException: print("node not found")
                 else:
                     #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
                     pass
 
+            def freeViewAngles(self, event_val):
+                if self.curvePoints is not None:
+                    try:
+                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "FreeView", slicer.util.getNode(self.plane_model + "_freeview_slice"), int(self.get_slice_img_dims("FreeView")[0]/9), self.fv_tan_slider.value, self.fv_ax_slider.value)
+                        self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_freeview_slice"), self.widgetClass.sock)
+                        self.widgetClass.slice_view_numpy("FreeView", self.plane_model + "_freeview_slice", self.sliceSock, mode="UPDATE")
+                    except slicer.util.MRMLNodeNotFoundException: print("node not found")
+                else:
+                    #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
+                    pass
+                
+                #self.model.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "Green", None, self.fv_tan_slider.value, self.fv_ax_slider.value)
+            '''
+            def sliceNodeTransform(self, node, event):
+                if node.GetName() == "FreeView" and self.slider_event == False: # TODO: rename slice widgets in layout to respective view they show instead of Green, yellow, red, etc.
+                    self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_freeview_slice"), self.widgetClass.sock)
+                    self.widgetClass.slice_view_numpy("FreeView", self.plane_model + "_freeview_slice", self.sliceSock, mode="UPDATE")
+                elif node.GetName() == "Yellow" and self.slider_event == False:
+                    self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential_slice"), self.widgetClass.sock)
+                    self.widgetClass.slice_view_numpy("Yellow", self.plane_model + "_tangential_slice", self.sliceSock, mode="UPDATE")
+                elif node.GetName() == "Green" and self.slider_event == False:
+                    print("green node event!")
+                    self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_transverse_slice"), self.widgetClass.sock)
+                    self.widgetClass.slice_view_numpy("Green", self.plane_model + "_transverse_slice", self.sliceSock, mode="UPDATE")
+            '''
             """
             def view_node(self, node):
                 #print(node)
@@ -861,7 +916,7 @@ class BlenderMonitorWidget:
                     self.curveNode = node
                     self.curvePoints = node.GetCurvePointsWorld()
                     self.frameSlider.maximum = self.curvePoints.GetNumberOfPoints()-2
-                    self.curveNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow'))
+                    self.curveNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow', "vtkMRMLSliceNodeFreeView"))
                 else: pass
 
             def onPantomographButtonToggled(self):
@@ -900,8 +955,8 @@ class BlenderMonitorWidget:
                                 straightned_models.append(model)
                             else: working_models.append(model)
 
-                print([t.GetName() for t in straightned_models])
-                print([t.GetName() for t in working_models])
+                #print([t.GetName() for t in straightned_models])
+                #print([t.GetName() for t in working_models])
 
                 for m_straight in straightned_models:
                     slicer.mrmlScene.RemoveNode(m_straight)
@@ -946,7 +1001,7 @@ class BlenderMonitorWidget:
                 sliceNode.Modified()
         
         self.sliceViewCache[name] = sliceViewPanel(name, self, self.layout, self.parent)
-        print(self.sliceViewCache)
+        #print(self.sliceViewCache)
 
     def delete_slice_view(self, name):
         self.sliceViewCache[name].sliceSock.handle_close()
@@ -1030,8 +1085,8 @@ class BlenderMonitorWidget:
         a = vtk_to_numpy(sc)
         a = a.flatten().tolist()
         #print(capturedImage)
-        print(capturedImage.GetDimensions())
-        print(imageSize)
+        #print(capturedImage.GetDimensions())
+        #print(imageSize)
         #image_w = capturedImage.GetDimensions()[0]
         #image_h = capturedImage.GetDimensions()[1]
         if mode == "NEW": socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))

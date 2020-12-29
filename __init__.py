@@ -259,6 +259,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 me = bpy.data.objects[ob].to_mesh(preserve_all_data_layers=False, depsgraph=None)
                 total_vertices += len(me.vertices)
             packet = ""
+            #print(total_vertices)
             for ob in objects: #[TODO] object group managment 
                 ob = bpy.data.objects[ob]
                 #slicer does not like . in ob names
@@ -309,9 +310,9 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 else:
                     sg.objects.link(ob)
 
-            if bpy.context.scene.legacy_sync == False:
+            if total_vertices < bpy.context.scene.legacy_vertex_threshold:
                 asyncsock.socket_obj.sock_handler[0].send_data("OBJ_MULTIPLE", packet[:-len("_N_OBJ_")])
-            elif bpy.context.scene.legacy_sync == True:
+            elif bpy.context.scene.legacy_sync == True and total_vertices > bpy.context.scene.legacy_vertex_threshold:
                 asyncsock.socket_obj.sock_handler[0].send_data("FILE_OBJ_MULTIPLE", packet[:-len("_XML_DATA_")])
 
         write_ob_transforms_to_cache(sg.objects)
@@ -904,6 +905,19 @@ class AddSliceView(bpy.types.Operator):
 
                 bpy.ops.object.select_all(action='DESELECT')
 
+                bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                bpy.ops.mesh.select_all(action='DESELECT')
+                bpy.ops.object.editmode_toggle()
+                bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_freeview_slice"
+                bpy.data.objects.get(context.scene.slice_name + "_freeview_slice").data.name = context.scene.slice_name + "_freeview_slice"
+
+                ob = bpy.data.objects.get(context.scene.slice_name + "_freeview_slice")
+                TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
+                bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+                #ob.hide_select = True
+
+                bpy.ops.object.select_all(action='DESELECT')
+
                 #bpy.data.objects[context.scene.slice_name + "_transverse_slice"].hide_select = True
                 #bpy.data.objects[context.scene.slice_name + "_tangential_slice"].hide_select = True
 
@@ -911,9 +925,10 @@ class AddSliceView(bpy.types.Operator):
                 ShowMessageBox("An object with this name exists. Sending to 3D Slicer.", "Slice View Info:")
             
             
-            send_obj_to_slicer([context.scene.slice_name + "_transverse_slice"], "ViewLink")
-            #time.sleep(2)
-            send_obj_to_slicer([context.scene.slice_name + "_tangential_slice"], "ViewLink")
+            send_obj_to_slicer([context.scene.slice_name + "_transverse_slice", context.scene.slice_name + "_tangential_slice", context.scene.slice_name + "_freeview_slice"], "ViewLink")
+            #time.sleep(1)
+            #send_obj_to_slicer([context.scene.slice_name + "_tangential_slice"], "ViewLink")
+            #send_obj_to_slicer([context.scene.slice_name + "_freeview_slice"], "ViewLink")
             time.sleep(1)
             #bpy.ops.object.select_all(action='DESELECT')
             asyncsock.socket_obj.sock_handler[0].send_data("SETUP_SLICE", context.scene.slice_name)

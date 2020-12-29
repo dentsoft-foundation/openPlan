@@ -73,21 +73,21 @@ class SlicerComm():
             print("DISCONNECTED")
 
         def handle_read(self):
-            data = self.socket.readAll()
+            while True:
+                data = self.socket.read(5242880)
+                #print(data)
+                self.received_data.append(data.data().decode())
+                data = ''.join(self.received_data)
+                if packet_terminator in data:
+                    self._process_data()
+                    self.received_data = []
+                    break
             #print(data)
-            self.received_data.append(data)
-            for i in range(0, len(self.received_data)):
-                try: self.received_data[i] = self.received_data[i].data().decode()
-                except: pass
-            data = ''.join(self.received_data)
-            if packet_terminator in data:
-                self._process_data()
-                self.received_data = []
 
         def _process_data(self):
             """We have the full ECHO command"""
             data = ''.join(self.received_data)
-            print(data)
+            #print(data)
             data = data[:-len(packet_terminator)]
             data = data.split(' net_packet: ')
             self.received_data = [] #empty buffer
@@ -95,7 +95,7 @@ class SlicerComm():
             try:
                 data[1] = eval(str(data[1]))
                 data[1] = zlib.decompress(data[1]).decode()
-                print(data[0])
+                #print(data[1])
                 if data[0] in self.cmd_ops: self.cmd_ops[data[0]](data[1]) #call stored function, pass stored arguments from tuple
                 elif data[0] in self.cmd_ops and len(data) > 2: self.cmd_ops[data[0]][0](data[1], *self.cmd_ops[data[0]][1]) # call stored function this way if more args exist - not tested
                 else: pass
@@ -108,7 +108,7 @@ class SlicerComm():
             self.write_buffer = str.encode(cmd.upper() + " net_packet: " + data + packet_terminator)
             self.socket.write(self.write_buffer)
             self.write_buffer = ""
-            print("sending: "+ cmd.upper())
+            #print("sending: "+ cmd.upper())
 
 class BlenderComm():
 
@@ -223,17 +223,16 @@ class BlenderComm():
             print("disconnected")
 
         def handle_read(self):
-            data = self.recv(8192)
-            #print(data)
-            #self.logger.debug('handle_read() -> %d bytes', len(data))
-            self.received_data.append(data)
-            for i in range(0, len(self.received_data)):
-                try: self.received_data[i] = self.received_data[i].decode()
-                except: pass
-            data = ''.join(self.received_data)
-            if packet_terminator in data:
-                self._process_data()
-                self.received_data = []
+            while True:
+                data = self.recv(5242880)
+                #print(data)
+                #self.logger.debug('handle_read() -> %d bytes', len(data))
+                self.received_data.append(data.decode())
+                data = ''.join(self.received_data)
+                if packet_terminator in data:
+                    self._process_data()
+                    self.received_data = []
+                    break
 
         def _process_data(self):
             """We have the full ECHO command"""
@@ -258,7 +257,7 @@ class BlenderComm():
                 if self.instance.debug == True: logging.getLogger("BLENDER").exception("Exception occurred") #dump tracestack
 
         def send_data(self, cmd, data):
-            print("sent CMD: " + cmd)
+            #print("sent CMD: " + cmd, data)
             data = str(zlib.compress(str.encode(data, encoding='UTF-8'), compression))
             self.send(str.encode(cmd.upper() + " net_packet: " + data + packet_terminator))
 
