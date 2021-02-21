@@ -97,12 +97,12 @@ __m.ob_names = []
 __m.transform_cache = {}
 
 
-def detect_transforms():
-    if "SlicerLink" not in bpy.data.collections:
+def detect_transforms(group='SlicerLink'):
+    if group not in bpy.data.collections:
         return None
     
     changed = []
-    sg = bpy.data.collections['SlicerLink']
+    sg = bpy.data.collections[group]
     for ob in sg.objects:
         if ob.name not in __m.transform_cache:
             changed += [ob.name]
@@ -127,7 +127,7 @@ def select_b_obj(modelName):
 
 def import_obj_from_slicer(data):
     #ShowMessageBox("Received object from Slicer.", "openPlan Info:")
-    obj, xml = data.split("_XML_DATA_")
+    obj, xml = data.split("_XMLDATA_")
     obj_points, obj_polys = obj.split("_POLYS_")
     obj_points = eval(obj_points)
     obj_polys = eval(obj_polys)
@@ -227,7 +227,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                             use_colors=False,
                             )
 
-                    x_scene = build_xml_scene([ob])
+                    x_scene = build_xml_scene([ob], group)
                     xml_str = tostring(x_scene).decode()
                     asyncsock.socket_obj.sock_handler[0].send_data("FILE_OBJ", xml_str)
             else:
@@ -238,10 +238,10 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                     obj_poly.append(tot_verts)
                     for v in poly.vertices:
                         obj_poly.append(v)
-                x_scene = build_xml_scene([ob])
+                x_scene = build_xml_scene([ob], group)
             
                 xml_str = tostring(x_scene).decode() #, encoding='unicode', method='xml')
-                packet = "%s_POLYS_%s_XML_DATA_%s"%(obj_verts, obj_poly, xml_str)
+                packet = "%s_POLYS_%s_XMLDATA_%s"%(obj_verts, obj_poly, xml_str)
 
                 #ShowMessageBox("Sending object to Slicer.", "openPlan Info:")
 
@@ -284,9 +284,9 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                                 use_colors=False,
                                 )
 
-                        x_scene = build_xml_scene([ob])
+                        x_scene = build_xml_scene([ob], group)
                         xml_str = tostring(x_scene).decode()
-                        packet = packet + "%s_XML_DATA_"%(xml_str)
+                        packet = packet + "%s_XMLDATA_"%(xml_str)
                 else:
                     obj_verts = [list(v.co) for v in me.vertices]
                     tot_verts = len(obj_verts[0])
@@ -295,10 +295,10 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                         obj_poly.append(tot_verts)
                         for v in poly.vertices:
                             obj_poly.append(v)
-                    x_scene = build_xml_scene([ob])
+                    x_scene = build_xml_scene([ob], group)
                 
                     xml_str = tostring(x_scene).decode() #, encoding='unicode', method='xml')
-                    packet = packet + "%s_POLYS_%s_XML_DATA_%s_N_OBJ_"%(obj_verts, obj_poly, xml_str)
+                    packet = packet + "%s_POLYS_%s_XMLDATA_%s_N_OBJ_"%(obj_verts, obj_poly, xml_str)
 
                     #ShowMessageBox("Sending object to Slicer.", "openPlan Info:")
 
@@ -313,7 +313,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
             if total_vertices < bpy.context.scene.legacy_vertex_threshold:
                 asyncsock.socket_obj.sock_handler[0].send_data("OBJ_MULTIPLE", packet[:-len("_N_OBJ_")])
             elif bpy.context.scene.legacy_sync == True and total_vertices > bpy.context.scene.legacy_vertex_threshold:
-                asyncsock.socket_obj.sock_handler[0].send_data("FILE_OBJ_MULTIPLE", packet[:-len("_XML_DATA_")])
+                asyncsock.socket_obj.sock_handler[0].send_data("FILE_OBJ_MULTIPLE", packet[:-len("_XMLDATA_")])
 
         write_ob_transforms_to_cache(sg.objects)
 
@@ -392,11 +392,16 @@ def obj_check_send():
 
 def update_scene_blender(xml):
     #time.sleep(0.5)
+    tmp_rmv_sg = False
     bpy.ops.object.select_all(action='DESELECT')
     #print(xml)
     tree = ElementTree(fromstring(xml))
     x_scene = tree.getroot()
     bpy.data.objects[x_scene[0].get('name')].select_set(True)
+    group = x_scene[0].get('group')
+    if x_scene[0].get('name') in bpy.data.collections[group].objects and group == "ViewLink":
+        bpy.data.collections[group].objects.unlink(bpy.data.objects[x_scene[0].get('name')])
+        tmp_rmv_sg = True
     xml_mx = x_scene[0].find('matrix')
     my_matrix = []
     for i in range(0,4):
@@ -420,6 +425,7 @@ def update_scene_blender(xml):
 
     dg = bpy.context.evaluated_depsgraph_get()
     dg.update()
+    if tmp_rmv_sg == True: bpy.data.collections[group].objects.link(bpy.data.objects[x_scene[0].get('name')])
 
 
 def resize_slice_plane(planeBMesh, width, height, axes):
@@ -566,7 +572,7 @@ def live_img_update(image):
         bm.free()
         me.update()
         bm = None
-        asyncsock.socket_obj.sock_handler[0].send_data("DEL", modelName)
+        #asyncsock.socket_obj.sock_handler[0].send_data("DEL", modelName)
         bpy.context.view_layer.objects.active = bpy.data.objects.get(modelName)
         bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
         send_obj_to_slicer([modelName], "ViewLink")
@@ -618,26 +624,39 @@ def create_cycles_material(context, sliceName, img_spec):
 @persistent
 def export_to_slicer(scene):
     #check for changes
-    changed = detect_transforms()
-    if changed == None: return  #TODO, more complex scene monitoring
+    changed_obj = detect_transforms()
+    changed_view = detect_transforms("ViewLink")
+
+    if changed_obj is not None:
+        #update the transform cache
+        for ob_name in changed_obj:
+            if ob_name not in bpy.data.objects: continue
+            __m.transform_cache[ob_name] = bpy.data.objects[ob_name].matrix_world.copy()
+        obs = [bpy.data.objects.get(ob_name) for ob_name in changed_obj if bpy.data.objects.get(ob_name) and ob_name in bpy.data.collections['SlicerLink'].objects]
+        if obs is not []:
+            x_scene = build_xml_scene(obs, 'SlicerLink')
+            xml_str = tostring(x_scene).decode()
+            asyncsock.socket_obj.sock_handler[0].send_data("XML", xml_str)
+        
+    if changed_view is not None:
+        #update the transform cache
+        for ob_name in changed_view:
+            if ob_name not in bpy.data.objects: continue
+            __m.transform_cache[ob_name] = bpy.data.objects[ob_name].matrix_world.copy()
+        view_obs = [bpy.data.objects.get(ob_name) for ob_name in changed_view if bpy.data.objects.get(ob_name) and ob_name in bpy.data.collections["ViewLink"].objects]
+        if view_obs is not []:
+            x_scene = build_xml_scene(view_obs, "ViewLink")
+            xml_str = tostring(x_scene).decode()
+            asyncsock.socket_obj.sock_handler[0].send_data("VIEW_UPDATE", xml_str)
+            print("sent view update command")
     
+
     """
     #limit refresh rate to keep blender smooth    
     now = time.time()
     if now - __m.last_update < .2: return #TODO time limit
     __m.last_update = time.time()
     """
-    
-    #update the transform cache
-    for ob_name in changed:
-        if ob_name not in bpy.data.objects: continue
-        __m.transform_cache[ob_name] = bpy.data.objects[ob_name].matrix_world.copy()
-    
-    #write an xml file with new info about objects
-    obs = [bpy.data.objects.get(ob_name) for ob_name in changed if bpy.data.objects.get(ob_name) and ob_name in bpy.data.collections['SlicerLink'].objects]
-    x_scene = build_xml_scene(obs)
-    xml_str = tostring(x_scene).decode()
-    asyncsock.socket_obj.sock_handler[0].send_data("XML", xml_str)
             
 def write_ob_transforms_to_cache(obs):
     __m.ob_names = []
@@ -645,7 +664,7 @@ def write_ob_transforms_to_cache(obs):
         __m.transform_cache[ob.name] = ob.matrix_world.copy()
         __m.ob_names += [ob.name]
 
-def build_xml_scene(obs):
+def build_xml_scene(obs, group):
     '''
     obs - list of blender objects
     file - filepath to write the xml
@@ -656,6 +675,7 @@ def build_xml_scene(obs):
     for ob in obs:
         xob = SubElement(x_scene, 'b_object')
         xob.set('name', ob.name)
+        xob.set('group', group)
         
         xmlmx = matrix_to_xml_element(ob.matrix_world)
         xob.extend([xmlmx])
@@ -885,7 +905,7 @@ class AddSliceView(bpy.types.Operator):
                 bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_transverse_slice"
                 bpy.data.objects.get(context.scene.slice_name + "_transverse_slice").data.name = context.scene.slice_name + "_transverse_slice"
 
-                ob = bpy.data.objects.get(context.scene.slice_name + "_transverse_slice")
+                ob = bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") #869
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
                 bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
                 #ob.hide_select = True # not possible b/c when resizing the plane we rely on being able to select it in order to reset the origin, when selection is disabled this cannot happen and plane is not centered appropriately
@@ -1119,7 +1139,7 @@ def register():
 
     bpy.types.Scene.overwrite = bpy.props.BoolProperty(name = "Overwrite", default = True, description = "If False, will add objects, if True, will replace entire group with selection")
 
-    bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view")
+    bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view_obj")
     
 
     bpy.utils.register_class(SelectedtoSlicerGroup)

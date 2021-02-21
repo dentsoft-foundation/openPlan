@@ -76,14 +76,36 @@ class SlicerComm():
             while True:
                 data = self.socket.read(5242880)
                 #print(data)
+                '''
                 self.received_data.append(data.data().decode())
                 data = ''.join(self.received_data)
                 if packet_terminator in data:
                     self._process_data()
                     self.received_data = []
                     break
+                '''
+                data = data.data().decode()
+                if packet_terminator in data:
+                    data = data.replace(packet_terminator, '')
+                    data = data.split(' net_packet: ')
+                    print(data[0])
+                    try:
+                        #print("\n\nNEW\n " + data[1]
+                        if packet_terminator in data[1]: data[1] = data[1].replace(packet_terminator, '')
+                        for op in  self.cmd_ops.keys():
+                            if op in data[1]: data[1] = data[1].replace(op, '')
+                        data[1] = eval(str(data[1]))
+                        data[1] = zlib.decompress(data[1]).decode()
+                        #print(data[1])
+                        if data[0] in self.cmd_ops: self.cmd_ops[data[0]](data[1]) #call stored function, pass stored arguments from tuple
+                        elif data[0] in self.cmd_ops and len(data) > 2: self.cmd_ops[data[0]][0](data[1], *self.cmd_ops[data[0]][1]) # call stored function this way if more args exist - not tested
+                        else: pass
+                    except Exception as e:
+                        if self.debug == True: logging.getLogger("SLICER").exception("Exception occurred") #dump tracestack
+                    break
             #print(data)
 
+        '''
         def _process_data(self):
             """We have the full ECHO command"""
             data = ''.join(self.received_data)
@@ -93,6 +115,8 @@ class SlicerComm():
             self.received_data = [] #empty buffer
             #print(data[1])
             try:
+                #print("\n\nNEW\n " + data[1]
+                if packet_terminator in data[1]: data[1] = data[1].replace(packet_terminator, '')
                 data[1] = eval(str(data[1]))
                 data[1] = zlib.decompress(data[1]).decode()
                 #print(data[1])
@@ -102,6 +126,7 @@ class SlicerComm():
             except Exception as e:
                 if self.debug == True: logging.getLogger("SLICER").exception("Exception occurred") #dump tracestack
             return
+        '''
 
         def send_data(self, cmd, data):
             data = str(zlib.compress(str.encode(data, encoding='UTF-8'), compression))
