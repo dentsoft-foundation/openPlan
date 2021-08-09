@@ -37,6 +37,7 @@ import numpy as np
 from numpy import nan
 from mathutils import Matrix
 import queue
+import subprocess
 
 import math
 
@@ -746,6 +747,45 @@ class StartSlicerLinkServer(bpy.types.Operator):
                     sg = bpy.data.collections.new(group)
         return {'FINISHED'}
 
+class Start3DSlicer(bpy.types.Operator):
+    """
+    Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
+    """
+    bl_idname = "link_slicer.3d_slicer"
+    bl_label = "Open DICOM"
+    
+    def execute(self,context):
+        if asyncsock.socket_obj == None and context.scene.DICOM_dir is not None:
+            slicer_startup_parameters = ''.join((
+                "dicomDataDir = '%s'\n"%context.scene.DICOM_dir.replace(os.sep, '/'),
+                "loadedNodeIDs = []\n",
+                "from DICOMLib import DICOMUtils\n",
+                "with DICOMUtils.TemporaryDICOMDatabase() as db:\n",
+                "\tDICOMUtils.importDicom(dicomDataDir, db)\n",
+                "\tpatientUIDs = db.patients()\n",
+                "\tfor patientUID in patientUIDs:\n",
+                "\t\tloadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))\n",
+                "slicer.util.selectModule('BlenderMonitor')\n",
+                "slicer.util.setSliceViewerLayers(background=slicer.util.getNode(loadedNodeIDs[0]))\n",
+                "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = slicer.util.getNode(loadedNodeIDs[0])"
+            ))
+            subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "Slicer.exe"), "--python-code", slicer_startup_parameters])
+            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
+            asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
+            context.scene.socket_state = "SERVER"
+
+            #over-riding the DEL key. not elegant but ok for now
+            wm = bpy.context.window_manager
+            km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
+            kmi = km.keymap_items.new('link_slicer.delete_objects_both', 'DEL', 'PRESS')
+            bpy.ops.wm.modal_timer_operator("INVOKE_DEFAULT")
+            ShowMessageBox("Server started.", "openPlan Info:")
+
+            for group in ['SlicerLink', "ViewLink"]:
+                if group not in bpy.data.collections:
+                    sg = bpy.data.collections.new(group)
+        return {'FINISHED'}
+
 class StartSlicerLinkClient(bpy.types.Operator):
     """
     Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
@@ -989,6 +1029,8 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
     self_dir = os.path.dirname(os.path.abspath(__file__))
     tmp_dir = os.path.join(self_dir, "slicer_module", "tmp")
     tmp_dir = bpy.props.StringProperty(name="Temp Folder", default=tmp_dir, subtype='DIR_PATH')
+    dir_3d_slicer = bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='DIR_PATH')
+    
 
     def draw(self, context):
         layout = self.layout
@@ -999,6 +1041,9 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
         row.prop(context.scene, "legacy_vertex_threshold")
         row = layout.row()
         row.prop(self, "tmp_dir")
+        row = layout.row()
+        row.prop(self, "dir_3d_slicer")
+
 
 class SlicerLinkPanel(bpy.types.Panel):
     """Panel for Slicer LInk"""
@@ -1013,7 +1058,7 @@ class SlicerLinkPanel(bpy.types.Panel):
         layout = self.layout
 
         scene = context.scene
-
+        '''
         # Create a simple row.
         layout.label(text=" Configure:")
 
@@ -1021,18 +1066,22 @@ class SlicerLinkPanel(bpy.types.Panel):
         row.prop(context.scene, "host_addr")
         row = layout.row()
         row.prop(context.scene, "host_port")
-
+        '''
         row = layout.row()
         if context.scene.socket_state == "NONE":
-            row.label(text="Start Mode:")
-            row.operator("link_slicer.slicer_link_server_start")
-            row.operator("link_slicer.slicer_link_client_start")
+            #row.label(text="Start Mode:")
+            #row.operator("link_slicer.slicer_link_server_start") #this may become handy as we scale things to the cloud
+            #row.operator("link_slicer.slicer_link_client_start")
+            row.prop(context.scene, "DICOM_dir")
+            row = layout.row()
+            row.operator("link_slicer.3d_slicer")
+        '''
         elif context.scene.socket_state == "SERVER" or context.scene.socket_state == "CLIENT":
             if context.scene.socket_state == "SERVER": row.label(text="Running: Server mode.")
             elif context.scene.socket_state == "CLIENT":row.label(text="Running: Client mode.")
             row = layout.row()
             row.operator("link_slicer.slicer_link_stop")
-            
+        ''' 
         if context.scene.socket_state == "SERVER" or context.scene.socket_state == "CLIENT":
             row = layout.row()
             row = layout.row()
@@ -1124,7 +1173,7 @@ def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
 def register():
     bpy.types.Scene.debug_log = bpy.props.BoolProperty(name = "Debug Log", default = True, description = "If True, exception error from asyncsock command executioner on received packet will be logged.")
     bpy.types.Scene.legacy_sync = bpy.props.BoolProperty(name = "File I/O Sync", default = True, description = "If True, large model objects will be exported and imported as files rather than copied over network I/O. Transforms and properties are still over network.")
-    bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=3000)
+    bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=3)
 
     if not on_load_new in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.append(on_load_new)
@@ -1140,12 +1189,16 @@ def register():
     bpy.types.Scene.overwrite = bpy.props.BoolProperty(name = "Overwrite", default = True, description = "If False, will add objects, if True, will replace entire group with selection")
 
     bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view_obj")
+
+    #bpy.types.Scene.dir_3d_slicer = bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='DIR_PATH')
+    bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='DIR_PATH')
     
 
     bpy.utils.register_class(SelectedtoSlicerGroup)
     bpy.utils.register_class(StopSlicerLink)
     bpy.utils.register_class(StartSlicerLinkServer)
     bpy.utils.register_class(StartSlicerLinkClient)
+    bpy.utils.register_class(Start3DSlicer)
     bpy.utils.register_class(SlicerLinkPanel)
     bpy.utils.register_class(SlicerLinkPreferences)
     bpy.utils.register_class(linkObjectsToSlicer)
@@ -1176,10 +1229,14 @@ def unregister():
     del bpy.types.Scene.overwrite
     del bpy.types.Scene.slice_name
 
+    #del bpy.types.Scene.dir_3d_slicer
+    del bpy.types.Scene.DICOM_dir
+
     bpy.utils.unregister_class(SelectedtoSlicerGroup)
     bpy.utils.unregister_class(StopSlicerLink)
     bpy.utils.unregister_class(StartSlicerLinkServer)
     bpy.utils.unregister_class(StartSlicerLinkClient)
+    bpy.utils.unregister_class(Start3DSlicer)
     bpy.utils.unregister_class(SlicerLinkPanel)
     bpy.utils.unregister_class(SlicerLinkPreferences)
     bpy.utils.unregister_class(linkObjectsToSlicer)

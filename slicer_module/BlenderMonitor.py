@@ -64,7 +64,7 @@ class BlenderMonitorWidget:
             self.setup()
             self.parent.show()
 
-        self.watching = False
+        self.watching = True #False before but now we are automating things
         self.sock = None
         self.sliceSock = None
         self.SlicerSelectedModelsList = []
@@ -89,6 +89,7 @@ class BlenderMonitorWidget:
         # Layout within the sample collapsible button
         self.sampleFormLayout = qt.QFormLayout(sampleCollapsibleButton)
 
+        '''
         # Input volume node selector
         inputVolumeNodeSelector = slicer.qMRMLNodeComboBox()
         inputVolumeNodeSelector.objectName = 'inputVolumeNodeSelector'
@@ -101,7 +102,8 @@ class BlenderMonitorWidget:
         self.sampleFormLayout.addRow("Input Volume:", inputVolumeNodeSelector)
         self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)',
                             inputVolumeNodeSelector, 'setMRMLScene(vtkMRMLScene*)')
-            
+        '''
+        '''
         self.host_address = qt.QLineEdit()
         self.host_address.setText(str(asyncsock.address[0]))
         self.sampleFormLayout.addRow("Host:", self.host_address)
@@ -109,6 +111,9 @@ class BlenderMonitorWidget:
         self.host_port = qt.QLineEdit()
         self.host_port.setText(str(asyncsock.address[1]))
         self.sampleFormLayout.addRow("Port:", self.host_port)
+        '''
+        self.host_address = asyncsock.address[0]
+        self.host_port = asyncsock.address[1]
 
         
         self.log_debug = qt.QCheckBox()
@@ -116,7 +121,7 @@ class BlenderMonitorWidget:
         self.log_debug.setChecked(True)
         self.sampleFormLayout.addRow("Debug:", self.log_debug)
         
-
+        '''
         # connect button
         playButton = qt.QPushButton("Connect")
         playButton.toolTip = "Connect to configured server."
@@ -124,6 +129,8 @@ class BlenderMonitorWidget:
         self.sampleFormLayout.addRow(playButton)
         playButton.connect('toggled(bool)', self.onPlayButtonToggled)
         self.playButton = playButton
+        '''
+        self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), int(self.host_port), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params), ("VIEW_UPDATE", self.slice_view_update_scene)], self.log_debug.isChecked())
 
         #Models list
         addModelButton = qt.QPushButton("Add Model")
@@ -665,7 +672,7 @@ class BlenderMonitorWidget:
                 self.f = None
                 self.slider_event = False
 
-                self.sliceSock = asyncsock.SlicerComm.EchoClient(str(self.widgetClass.host_address.text), int(self.widgetClass.host_port.text), [("XML", self.widgetClass.update_scene), ("OBJ", self.widgetClass.import_obj_from_blender), ("OBJ_MULTIPLE", self.widgetClass.import_multiple), ("CHECK", self.widgetClass.obj_check_handle), ("DEL", self.widgetClass.delete_model), ("SETUP_SLICE", self.widgetClass.add_slice_view), ("DEL_SLICE", self.widgetClass.delete_slice_view)])
+                self.sliceSock = asyncsock.SlicerComm.EchoClient(str(self.widgetClass.host_address), int(self.widgetClass.host_port), [("XML", self.widgetClass.update_scene), ("OBJ", self.widgetClass.import_obj_from_blender), ("OBJ_MULTIPLE", self.widgetClass.import_multiple), ("CHECK", self.widgetClass.obj_check_handle), ("DEL", self.widgetClass.delete_model), ("SETUP_SLICE", self.widgetClass.add_slice_view), ("DEL_SLICE", self.widgetClass.delete_slice_view)])
                 
                 sliceViewSettings = ctk.ctkCollapsibleButton()
                 sliceViewSettings.text = "Slice View Settings: " + name
@@ -1278,12 +1285,14 @@ class BlenderMonitorWidget:
         outputStraightenedVolume.GetDisplayNode().CopyContent(volumeNode.GetDisplayNode())
         slicer.mrmlScene.RemoveNode(parameterNode)
 
+    '''
     def onbtn_select_volumeClicked(self, volumeNode):
         if volumeNode is not None:
             slicer.util.setSliceViewerLayers(background=volumeNode)
             self.workingVolume = volumeNode
         else:
-            slicer.util.confirmOkCancelDisplay("Volume not selected!", "slicerPano Info:")
+            #slicer.util.confirmOkCancelDisplay("Volume not selected!", "slicerPano Info:")
+            pass
 
     def onPlayButtonToggled(self, checked):
         if checked:
@@ -1297,8 +1306,7 @@ class BlenderMonitorWidget:
             self.playButton.text = "Start"
             self.sock.handle_close()
             self.sock = None
-            
-            #TODO
+    '''
                 
     def frameDelaySliderValueChanged(self, newValue):
         #print "frameDelaySliderValueChanged:", newValue
