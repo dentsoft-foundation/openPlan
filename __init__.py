@@ -752,23 +752,31 @@ class Start3DSlicer(bpy.types.Operator):
     Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
     """
     bl_idname = "link_slicer.3d_slicer"
-    bl_label = "Open DICOM"
+    bl_label = "Open Image"
     
     def execute(self,context):
         if asyncsock.socket_obj == None and context.scene.DICOM_dir is not None:
-            slicer_startup_parameters = ''.join((
-                "dicomDataDir = '%s'\n"%context.scene.DICOM_dir.replace(os.sep, '/'),
-                "loadedNodeIDs = []\n",
-                "from DICOMLib import DICOMUtils\n",
-                "with DICOMUtils.TemporaryDICOMDatabase() as db:\n",
-                "\tDICOMUtils.importDicom(dicomDataDir, db)\n",
-                "\tpatientUIDs = db.patients()\n",
-                "\tfor patientUID in patientUIDs:\n",
-                "\t\tloadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))\n",
-                "slicer.util.selectModule('BlenderMonitor')\n",
-                "slicer.util.setSliceViewerLayers(background=slicer.util.getNode(loadedNodeIDs[0]))\n",
-                "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = slicer.util.getNode(loadedNodeIDs[0])"
-            ))
+            if os.path.splitext(context.scene.DICOM_dir)[1].lower() == ".dcm":
+                slicer_startup_parameters = ''.join((
+                    "dicomDataDir = '%s'\n"%os.path.dirname(context.scene.DICOM_dir).replace(os.sep, '/'),
+                    "loadedNodeIDs = []\n",
+                    "from DICOMLib import DICOMUtils\n",
+                    "with DICOMUtils.TemporaryDICOMDatabase() as db:\n",
+                    "\tDICOMUtils.importDicom(dicomDataDir, db)\n",
+                    "\tpatientUIDs = db.patients()\n",
+                    "\tfor patientUID in patientUIDs:\n",
+                    "\t\tloadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))\n",
+                    "slicer.util.selectModule('BlenderMonitor')\n",
+                    "slicer.util.setSliceViewerLayers(background=slicer.util.getNode(loadedNodeIDs[0]))\n",
+                    "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = slicer.util.getNode(loadedNodeIDs[0])"
+                ))
+            else:
+                slicer_startup_parameters = ''.join((
+                    "volumeNode = slicer.util.loadVolume('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
+                    "slicer.util.selectModule('BlenderMonitor')\n",
+                    "slicer.util.setSliceViewerLayers(background=volumeNode)\n",
+                    "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = volumeNode"
+                ))
             subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "Slicer.exe"), "--python-code", slicer_startup_parameters])
             asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
@@ -867,7 +875,7 @@ class deleteObjectsBoth(bpy.types.Operator):
         del_mode = bpy.context.scene.DEL_type_props.Mode
         if "Blender" in del_mode:
             for ob in bpy.context.selected_objects:
-                #ob.select_set(True)
+                #ob.select_set(True) HUH????
                 bpy.ops.object.delete(use_global=True, confirm=False)
         elif "3D Slicer" in del_mode:
             if not asyncsock.socket_obj == None:
@@ -1191,7 +1199,7 @@ def register():
     bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view_obj")
 
     #bpy.types.Scene.dir_3d_slicer = bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='DIR_PATH')
-    bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='DIR_PATH')
+    bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH')
     
 
     bpy.utils.register_class(SelectedtoSlicerGroup)
