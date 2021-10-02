@@ -21,8 +21,8 @@ http://blender.stackexchange.com/questions/14202/index-out-of-range-for-uilist-c
 bl_info = {
     "name": "openPlan",
     "author": "Georgi Talmazov, Patrick R. Moore",
-    "version": (2, 5),
-    "blender": (2, 83, 0),
+    "version": (3, 0),
+    "blender": (2, 93, 0),
     "location": "3D View -> UI SIDE PANEL",
     "description": "Blender and 3D Slicer sync add-on.",
     "warning": "",
@@ -226,6 +226,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                             use_normals=False,
                             use_uv_coords=False,
                             use_colors=False,
+                            use_ascii=False,
                             )
 
                     x_scene = build_xml_scene([ob], group)
@@ -283,6 +284,7 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                                 use_normals=False,
                                 use_uv_coords=False,
                                 use_colors=False,
+                                use_ascii=False,
                                 )
 
                         x_scene = build_xml_scene([ob], group)
@@ -828,7 +830,7 @@ class linkObjectsToSlicer(bpy.types.Operator):
             for ob in context.selected_objects:
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
                 context.view_layer.objects.active = ob
-                bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+                bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
 
             obj_check_send()
         return {'FINISHED'}
@@ -960,7 +962,7 @@ class AddSliceView(bpy.types.Operator):
 
                 ob = bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") #869
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
-                bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+                bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
                 #ob.hide_select = True # not possible b/c when resizing the plane we rely on being able to select it in order to reset the origin, when selection is disabled this cannot happen and plane is not centered appropriately
 
                 bpy.ops.object.select_all(action='DESELECT')
@@ -973,7 +975,7 @@ class AddSliceView(bpy.types.Operator):
 
                 ob = bpy.data.objects.get(context.scene.slice_name + "_tangential_slice")
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
-                bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+                bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
                 #ob.hide_select = True
 
                 bpy.ops.object.select_all(action='DESELECT')
@@ -986,7 +988,7 @@ class AddSliceView(bpy.types.Operator):
 
                 ob = bpy.data.objects.get(context.scene.slice_name + "_freeview_slice")
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
-                bpy.ops.object.modifier_apply(apply_as='DATA', modifier=TRIANGULATE_mod.name)
+                bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
                 #ob.hide_select = True
 
                 bpy.ops.object.select_all(action='DESELECT')
@@ -1041,8 +1043,8 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
 
     self_dir = os.path.dirname(os.path.abspath(__file__))
     tmp_dir = os.path.join(self_dir, "slicer_module", "tmp")
-    tmp_dir = bpy.props.StringProperty(name="Temp Folder", default=tmp_dir, subtype='DIR_PATH')
-    dir_3d_slicer = bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='DIR_PATH')
+    tmp_dir : bpy.props.StringProperty(name="Temp Folder", default=tmp_dir, subtype='DIR_PATH')
+    dir_3d_slicer : bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='DIR_PATH')
     
 
     def draw(self, context):
