@@ -747,6 +747,7 @@ class StartSlicerLinkServer(bpy.types.Operator):
                     sg = bpy.data.collections.new(group)
         return {'FINISHED'}
 
+import platform
 class Start3DSlicer(bpy.types.Operator):
     """
     Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
@@ -777,7 +778,11 @@ class Start3DSlicer(bpy.types.Operator):
                     "slicer.util.setSliceViewerLayers(background=volumeNode)\n",
                     "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = volumeNode"
                 ))
-            subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "Slicer.exe"), "--python-code", slicer_startup_parameters])
+            if platform.system() == "Windows": #windows support
+                subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "Slicer.exe"), "--python-code", slicer_startup_parameters])
+            elif platform.system() == "Darwin": #macOS support
+                bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer = "/Applications/Slicer.app/Contents/MacOS/Slicer"
+                subprocess.Popen([bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "--python-code", slicer_startup_parameters])
             asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
             context.scene.socket_state = "SERVER"
