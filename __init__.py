@@ -781,7 +781,7 @@ class Start3DSlicer(bpy.types.Operator):
                     "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = volumeNode"
                 ))
             if platform.system() == "Windows": #windows support
-                subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "Slicer.exe"), "--python-code", slicer_startup_parameters])
+                subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer), "--python-code", slicer_startup_parameters])
             elif platform.system() == "Darwin": #macOS support
                 bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer = "/Applications/Slicer.app/Contents/MacOS/Slicer"
                 subprocess.Popen([bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "--python-code", slicer_startup_parameters])
@@ -1044,7 +1044,7 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
     self_dir = os.path.dirname(os.path.abspath(__file__))
     tmp_dir = os.path.join(self_dir, "slicer_module", "tmp")
     tmp_dir : bpy.props.StringProperty(name="Temp Folder", default=tmp_dir, subtype='DIR_PATH')
-    dir_3d_slicer : bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='DIR_PATH')
+    dir_3d_slicer : bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='FILE_PATH')
     
 
     def draw(self, context):
@@ -1168,8 +1168,20 @@ def on_load_new(*args):
     bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
 
 @persistent
+def on_load_post(*args):
+    print(bpy.context.scene.saved_linked_col)
+    #bpy.ops.link_slicer.3d_slicer("INVOKE_DEFAULT")
+    if not bpy.context.scene.saved_linked_col:
+        for ob in bpy.context.scene.saved_linked_col:
+            print(ob)
+
+@persistent
 def on_save_pre(*args):
     bpy.context.scene.socket_state = "NONE"
+    if bpy.data.collections.get("SlicerLink") is not None:
+        bpy.context.scene.saved_linked_col.clear()
+        for ob in bpy.data.collections.get("SlicerLink").objects:
+            bpy.context.scene.saved_linked_col.append(ob.name)
 
 @persistent
 def on_save_post(*args):
@@ -1190,12 +1202,6 @@ def register():
     bpy.types.Scene.legacy_sync = bpy.props.BoolProperty(name = "File I/O Sync", default = True, description = "If True, large model objects will be exported and imported as files rather than copied over network I/O. Transforms and properties are still over network.")
     bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=3)
 
-    if not on_load_new in bpy.app.handlers.load_pre:
-        bpy.app.handlers.load_pre.append(on_load_new)
-    if not on_save_pre in bpy.app.handlers.save_pre:
-        bpy.app.handlers.save_pre.append(on_save_pre)
-    if not on_save_post in bpy.app.handlers.save_post:
-        bpy.app.handlers.save_post.append(on_save_post)
     #register host address, port input, state=NONE/CLIENT/SERVER
     bpy.types.Scene.host_addr = bpy.props.StringProperty(name = "Host", description = "Enter the host PORT the server to listen on OR client to connect to.", default = asyncsock.address[0])
     bpy.types.Scene.host_port = bpy.props.StringProperty(name = "Port", description = "Enter the host PORT the server to listen on OR client to connect to.", default = str(asyncsock.address[1]))
@@ -1207,6 +1213,8 @@ def register():
 
     #bpy.types.Scene.dir_3d_slicer = bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='DIR_PATH')
     bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH')
+
+    bpy.types.Scene.saved_linked_col = [] # traditional list doesn't save, use property group+collection property instead => https://blender.stackexchange.com/questions/16511/how-can-i-store-and-retrieve-a-custom-list-in-a-blend-file
     
 
     bpy.utils.register_class(SelectedtoSlicerGroup)
@@ -1224,6 +1232,16 @@ def register():
     bpy.utils.register_class(AddSliceView)
     bpy.utils.register_class(DeleteSliceView)
     bpy.utils.register_class(ModalTimerOperator)
+
+    
+    if not on_load_new in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(on_load_new)
+    if not on_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(on_load_post)
+    if not on_save_pre in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.append(on_save_pre)
+    if not on_save_post in bpy.app.handlers.save_post:
+        bpy.app.handlers.save_post.append(on_save_post)
     
 
 def unregister():
@@ -1233,6 +1251,8 @@ def unregister():
 
     if on_load_new in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(on_load_new)
+    if on_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(on_load_post)
     if on_save_pre in bpy.app.handlers.save_pre:
         bpy.app.handlers.save_pre.remove(on_save_pre)
     if on_save_post in bpy.app.handlers.save_post:
@@ -1245,7 +1265,7 @@ def unregister():
     del bpy.types.Scene.slice_name
 
     #del bpy.types.Scene.dir_3d_slicer
-    del bpy.types.Scene.DICOM_dir
+    #del bpy.types.Scene.DICOM_dir
 
     bpy.utils.unregister_class(SelectedtoSlicerGroup)
     bpy.utils.unregister_class(StopSlicerLink)
