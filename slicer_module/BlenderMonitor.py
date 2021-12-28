@@ -1148,9 +1148,6 @@ class BlenderMonitorWidget:
         else:
             print("Scene saving failed")
 
-    def open_project(self, abspath):
-        slicer.util.loadScene(abspath)
-
     #https://github.com/PerkLab/SlicerSandbox/blob/master/CurvedPlanarReformat/CurvedPlanarReformat.py
     def computeStraighteningTransform(self, transformToStraightenedNode, curveNode, sliceSizeMm, outputSpacingMm):
         """

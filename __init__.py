@@ -21,7 +21,7 @@ http://blender.stackexchange.com/questions/14202/index-out-of-range-for-uilist-c
 bl_info = {
     "name": "openPlan",
     "author": "Georgi Talmazov, Patrick R. Moore",
-    "version": (3, 0),
+    "version": (3, 1),
     "blender": (2, 93, 0),
     "location": "3D View -> UI SIDE PANEL",
     "description": "Blender and 3D Slicer sync add-on.",
@@ -54,7 +54,6 @@ from xml.etree.ElementTree import Element, SubElement, Comment, ElementTree, tos
 from bpy.types import Operator, AddonPreferences
 from bpy.app.handlers import persistent
 from io_mesh_ply import export_ply
-#import atexit
 
 #TCP sock lib
 from .slicer_module import comm as asyncsock
@@ -1167,29 +1166,29 @@ class ModalTimerOperator(bpy.types.Operator):
         wm = context.window_manager
         wm.event_timer_remove(self._timer)
 
-import signal
 @persistent
 def on_load_new(*args):
-    bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
-
     if platform.system() == "Windows" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
         subprocess.call(['taskkill', '/F', '/T', '/PID',  str(asyncsock.slicer_sysprocess.pid)])
+    bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
 
 @persistent
 def on_load_post(*args):
-    #if bpy.data.collections['SlicerLink'] is not None:
-    #    print(bpy.data.collections['SlicerLink'].tolist())
-    print(bpy.data.filepath)
     if bpy.context.scene.DICOM_dir != '':
         bpy.context.scene.DICOM_dir = bpy.data.filepath + ".mrb"
-        print(bpy.context.scene.DICOM_dir)
-        bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+        #bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
         #bpy.ops.link_slicer.3d_slicer("INVOKE_DEFAULT") # WHY ERROR???
+        for model in bpy.context.scene.linked_models:
+            print(bpy.data.objects[model.name], model.name)
 
 @persistent
 def on_save_pre(*args):
     #bpy.context.scene.socket_state = "NONE"
-    pass
+    bpy.context.scene.linked_models.clear()
+    if "SlicerLink" in bpy.data.collections:
+        for obj in bpy.data.collections['SlicerLink'].objects:
+            bpy.context.scene.linked_models.add()
+            bpy.context.scene.linked_models[-1].name = obj.name
 
 @persistent
 def on_save_post(*args):
@@ -1197,7 +1196,8 @@ def on_save_post(*args):
         asyncsock.socket_obj.sock_handler[0].send_data("SAVE", bpy.data.filepath)
         #bpy.context.scene.socket_state = "SERVER"
 
-
+class linked_models_collection(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty( name="Name", description="Linked objects.", default="")
 
 def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
 
@@ -1207,6 +1207,9 @@ def ShowMessageBox(message = "", title = "Message Box", icon = 'INFO'):
     bpy.context.window_manager.popup_menu(draw, title = title, icon = icon)
 
 def register():
+    bpy.utils.register_class(Start3DSlicer)
+    bpy.utils.register_class(StopSlicerLink)
+
     bpy.types.Scene.debug_log = bpy.props.BoolProperty(name = "Debug Log", default = True, description = "If True, exception error from asyncsock command executioner on received packet will be logged.")
     bpy.types.Scene.legacy_sync = bpy.props.BoolProperty(name = "File I/O Sync", default = True, description = "If True, large model objects will be exported and imported as files rather than copied over network I/O. Transforms and properties are still over network.")
     bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=3)
@@ -1221,12 +1224,12 @@ def register():
     bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view_obj")
     
     bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH')
+    bpy.utils.register_class(linked_models_collection)
+    bpy.types.Scene.linked_models = bpy.props.CollectionProperty(type=linked_models_collection)
 
     bpy.utils.register_class(SelectedtoSlicerGroup)
-    bpy.utils.register_class(StopSlicerLink)
     bpy.utils.register_class(StartSlicerLinkServer)
     bpy.utils.register_class(StartSlicerLinkClient)
-    bpy.utils.register_class(Start3DSlicer)
     bpy.utils.register_class(SlicerLinkPanel)
     bpy.utils.register_class(SlicerLinkPreferences)
     bpy.utils.register_class(linkObjectsToSlicer)
