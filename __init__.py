@@ -775,8 +775,8 @@ class Start3DSlicer(bpy.types.Operator):
                 ))
             elif os.path.splitext(context.scene.DICOM_dir)[1].lower() == ".mrb":
                 slicer_startup_parameters = ''.join((
+                    "slicer.util.selectModule('BlenderMonitor')\n",
                     "slicer.util.loadScene('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
-                    "slicer.util.selectModule('BlenderMonitor')"
                 ))
             else:
                 slicer_startup_parameters = ''.join((
