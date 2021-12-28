@@ -130,7 +130,7 @@ class BlenderMonitorWidget:
         playButton.connect('toggled(bool)', self.onPlayButtonToggled)
         self.playButton = playButton
         '''
-        self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), int(self.host_port), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params), ("VIEW_UPDATE", self.slice_view_update_scene)], self.log_debug.isChecked())
+        self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), int(self.host_port), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params), ("VIEW_UPDATE", self.slice_view_update_scene), ("SAVE", self.save_project)], self.log_debug.isChecked())
 
         #Models list
         addModelButton = qt.QPushButton("Add Model")
@@ -1140,6 +1140,16 @@ class BlenderMonitorWidget:
             slice_widget_node.Modified()
 
             self.slice_view_numpy(name.replace("_obj", ''), name, self.sock, mode="UPDATE")
+
+    def save_project(self, abspath):
+        abspath += ".mrb"
+        if slicer.util.saveScene(abspath):
+            print("Scene saved to: {0}".format(abspath))
+        else:
+            print("Scene saving failed")
+
+    def open_project(self, abspath):
+        slicer.util.loadScene(abspath)
 
     #https://github.com/PerkLab/SlicerSandbox/blob/master/CurvedPlanarReformat/CurvedPlanarReformat.py
     def computeStraighteningTransform(self, transformToStraightenedNode, curveNode, sliceSizeMm, outputSpacingMm):

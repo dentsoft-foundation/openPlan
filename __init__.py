@@ -773,6 +773,11 @@ class Start3DSlicer(bpy.types.Operator):
                     "slicer.util.setSliceViewerLayers(background=slicer.util.getNode(loadedNodeIDs[0]))\n",
                     "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = slicer.util.getNode(loadedNodeIDs[0])"
                 ))
+            elif os.path.splitext(context.scene.DICOM_dir)[1].lower() == ".mrb":
+                slicer_startup_parameters = ''.join((
+                    "slicer.util.loadScene('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
+                    "slicer.util.selectModule('BlenderMonitor')"
+                ))
             else:
                 slicer_startup_parameters = ''.join((
                     "volumeNode = slicer.util.loadVolume('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
@@ -781,10 +786,10 @@ class Start3DSlicer(bpy.types.Operator):
                     "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = volumeNode"
                 ))
             if platform.system() == "Windows": #windows support
-                subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer), "--python-code", slicer_startup_parameters])
+                asyncsock.slicer_sysprocess = subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer), "--python-code", slicer_startup_parameters])
             elif platform.system() == "Darwin": #macOS support
                 bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer = "/Applications/Slicer.app/Contents/MacOS/Slicer"
-                subprocess.Popen([bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "--python-code", slicer_startup_parameters])
+                asyncsock.slicer_sysprocess = subprocess.Popen([bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "--python-code", slicer_startup_parameters])
             asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
             context.scene.socket_state = "SERVER"
@@ -1162,31 +1167,35 @@ class ModalTimerOperator(bpy.types.Operator):
         wm = context.window_manager
         wm.event_timer_remove(self._timer)
 
-
+import signal
 @persistent
 def on_load_new(*args):
     bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
 
+    if platform.system() == "Windows" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
+        subprocess.call(['taskkill', '/F', '/T', '/PID',  str(asyncsock.slicer_sysprocess.pid)])
+
 @persistent
 def on_load_post(*args):
-    print(bpy.context.scene.saved_linked_col)
-    #bpy.ops.link_slicer.3d_slicer("INVOKE_DEFAULT")
-    if not bpy.context.scene.saved_linked_col:
-        for ob in bpy.context.scene.saved_linked_col:
-            print(ob)
+    #if bpy.data.collections['SlicerLink'] is not None:
+    #    print(bpy.data.collections['SlicerLink'].tolist())
+    print(bpy.data.filepath)
+    if bpy.context.scene.DICOM_dir != '':
+        bpy.context.scene.DICOM_dir = bpy.data.filepath + ".mrb"
+        print(bpy.context.scene.DICOM_dir)
+        bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+        #bpy.ops.link_slicer.3d_slicer("INVOKE_DEFAULT") # WHY ERROR???
 
 @persistent
 def on_save_pre(*args):
-    bpy.context.scene.socket_state = "NONE"
-    if bpy.data.collections.get("SlicerLink") is not None:
-        bpy.context.scene.saved_linked_col.clear()
-        for ob in bpy.data.collections.get("SlicerLink").objects:
-            bpy.context.scene.saved_linked_col.append(ob.name)
+    #bpy.context.scene.socket_state = "NONE"
+    pass
 
 @persistent
 def on_save_post(*args):
     if asyncsock.socket_obj is not None:
-        bpy.context.scene.socket_state = "SERVER"
+        asyncsock.socket_obj.sock_handler[0].send_data("SAVE", bpy.data.filepath)
+        #bpy.context.scene.socket_state = "SERVER"
 
 
 
@@ -1210,12 +1219,8 @@ def register():
     bpy.types.Scene.overwrite = bpy.props.BoolProperty(name = "Overwrite", default = True, description = "If False, will add objects, if True, will replace entire group with selection")
 
     bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view_obj")
-
-    #bpy.types.Scene.dir_3d_slicer = bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='DIR_PATH')
-    bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH')
-
-    bpy.types.Scene.saved_linked_col = [] # traditional list doesn't save, use property group+collection property instead => https://blender.stackexchange.com/questions/16511/how-can-i-store-and-retrieve-a-custom-list-in-a-blend-file
     
+    bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH')
 
     bpy.utils.register_class(SelectedtoSlicerGroup)
     bpy.utils.register_class(StopSlicerLink)
@@ -1266,6 +1271,8 @@ def unregister():
 
     #del bpy.types.Scene.dir_3d_slicer
     #del bpy.types.Scene.DICOM_dir
+
+    #del bpy.types.Scene.slicer_sysprocess
 
     bpy.utils.unregister_class(SelectedtoSlicerGroup)
     bpy.utils.unregister_class(StopSlicerLink)

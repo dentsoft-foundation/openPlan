@@ -34,6 +34,7 @@ socket_obj = None
 thread = None
 address = ('127.0.0.1', 5959)
 compression = 8
+slicer_sysprocess = None
 
 class SlicerComm():
     # https://github.com/pieper/SlicerWeb/blob/master/WebServer/WebServer.py#L1479 adapted from, using QSocketNotifier class
