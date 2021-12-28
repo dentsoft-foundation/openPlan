@@ -753,7 +753,7 @@ class Start3DSlicer(bpy.types.Operator):
     """
     Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
     """
-    bl_idname = "link_slicer.3d_slicer"
+    bl_idname = "link_slicer.slicer_init"
     bl_label = "Open Image"
     
     def execute(self,context):
@@ -777,6 +777,13 @@ class Start3DSlicer(bpy.types.Operator):
                     "slicer.util.selectModule('BlenderMonitor')\n",
                     "slicer.util.loadScene('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
                 ))
+                if len(context.scene.linked_models) > 0:
+                    models = ""
+                    for model in context.scene.linked_models:
+                        models += model.name + ","
+                    slicer_startup_parameters += slicer_startup_parameters.join((
+                        "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().sock.send_data('CHECK', 'LINK_MULTIPLE_BREAK_%s')\n"%(models[:-1]),
+                    ))
             else:
                 slicer_startup_parameters = ''.join((
                     "volumeNode = slicer.util.loadVolume('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
@@ -798,11 +805,12 @@ class Start3DSlicer(bpy.types.Operator):
             km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
             kmi = km.keymap_items.new('link_slicer.delete_objects_both', 'DEL', 'PRESS')
             bpy.ops.wm.modal_timer_operator("INVOKE_DEFAULT")
-            ShowMessageBox("Server started.", "openPlan Info:")
+            ShowMessageBox("3D Slicer started.", "openPlan Info:")
 
             for group in ['SlicerLink', "ViewLink"]:
                 if group not in bpy.data.collections:
                     sg = bpy.data.collections.new(group)
+                
         return {'FINISHED'}
 
 class StartSlicerLinkClient(bpy.types.Operator):
@@ -1093,7 +1101,7 @@ class SlicerLinkPanel(bpy.types.Panel):
             #row.operator("link_slicer.slicer_link_client_start")
             row.prop(context.scene, "DICOM_dir")
             row = layout.row()
-            row.operator("link_slicer.3d_slicer")
+            row.operator("link_slicer.slicer_init")
         '''
         elif context.scene.socket_state == "SERVER" or context.scene.socket_state == "CLIENT":
             if context.scene.socket_state == "SERVER": row.label(text="Running: Server mode.")
@@ -1170,16 +1178,14 @@ class ModalTimerOperator(bpy.types.Operator):
 def on_load_new(*args):
     if platform.system() == "Windows" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
         subprocess.call(['taskkill', '/F', '/T', '/PID',  str(asyncsock.slicer_sysprocess.pid)])
-    bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+        bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
 
 @persistent
 def on_load_post(*args):
     if bpy.context.scene.DICOM_dir != '':
         bpy.context.scene.DICOM_dir = bpy.data.filepath + ".mrb"
-        #bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
-        #bpy.ops.link_slicer.3d_slicer("INVOKE_DEFAULT") # WHY ERROR???
-        for model in bpy.context.scene.linked_models:
-            print(bpy.data.objects[model.name], model.name)
+        bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+        bpy.ops.link_slicer.slicer_init("INVOKE_DEFAULT")
 
 @persistent
 def on_save_pre(*args):
