@@ -142,7 +142,9 @@ class BlenderComm():
 
     def start():
         try:
-            asyncore.loop()
+            print("started asyncore.loop")
+            asyncore.loop(timeout = 0.1, use_poll = True)
+            print("exited asyncore.loop")
         except asyncore.ExitNow as e:
             #print(e)
             pass
@@ -159,11 +161,16 @@ class BlenderComm():
     
     def stop_thread(my_thread):
         my_thread.join()
+        print("joining asyncore loop thread")
         #raise asyncore.ExitNow('Server is quitting!')
         
+        
+        
     def check_main_thread (main_thread, server_thread, socket_obj):
-        while main_thread.is_alive() and server_thread.is_alive():
-            time.sleep(5)
+        while main_thread.is_alive(): # and server_thread.is_alive():
+            time.sleep(1) #default 5
+            logging.getLogger("BLENDER").exception("running check main thread")
+            print("running check main thread")
         socket_obj.stop_server(socket_obj)
         BlenderComm.stop_thread(server_thread)
         exit()
@@ -246,7 +253,7 @@ class BlenderComm():
                 if client == self:
                     del self.instance.sock_handler[self.instance.sock_handler.index(self)]
                     print("client instance deleted")
-            print("disconnected")
+            print("client disconnected")
 
         def handle_read(self):
             while True:
@@ -295,7 +302,7 @@ class BlenderComm():
             asyncore.dispatcher.__init__(self)
             self.instance = self
             self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-            #self.set_reuse_addr()
+            self.set_reuse_addr()
             self.bind((host, port))
             self.listen(5) #max number of connected clients
             self.sock_handler = []
@@ -318,6 +325,9 @@ class BlenderComm():
                 connected_client.handle_close()
             self.close()
             #socket_obj = None
+            #raise asyncore.ExitNow('Server is quitting!')
+            asyncore.close_all()
+            self.close()
             print("server stopped")
         
 

@@ -936,10 +936,10 @@ class StopSlicerLink(bpy.types.Operator):
             bpy.app.handlers.depsgraph_update_post.remove(export_to_slicer)
 
         if context.scene.socket_state == "SERVER":
-            try:
-                asyncsock.socket_obj.stop_server(asyncsock.socket_obj)
-                asyncsock.BlenderComm.stop_thread(asyncsock.thread)
-            except: pass
+            #try:
+            asyncsock.socket_obj.stop_server(asyncsock.socket_obj)
+            asyncsock.BlenderComm.stop_thread(asyncsock.thread)
+            #except: pass
             asyncsock.socket_obj = None
             context.scene.socket_state = "NONE"
         elif context.scene.socket_state == "CLIENT":
@@ -1075,7 +1075,7 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
 class SlicerLinkPanel(bpy.types.Panel):
     """Panel for Slicer LInk"""
     bl_label = "openPlan Control Panel"
-    bl_idname = "SCENE_PT_layout"
+    bl_idname = "SCENE_PT_SlicerLinkPanel"
     bl_space_type = "VIEW_3D"
     bl_region_type = 'UI'
     bl_category = "openPlan"
@@ -1179,13 +1179,19 @@ def on_load_new(*args):
     if platform.system() == "Windows" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
         subprocess.call(['taskkill', '/F', '/T', '/PID',  str(asyncsock.slicer_sysprocess.pid)])
         bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+    elif platform.system() == "Darwin" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
+        bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+        asyncsock.slicer_sysprocess.terminate()
+        asyncsock.slicer_sysprocess.wait()
+        
 
 @persistent
 def on_load_post(*args):
     if bpy.context.scene.DICOM_dir != '':
         bpy.context.scene.DICOM_dir = bpy.data.filepath + ".mrb"
-        bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+        #bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
         bpy.ops.link_slicer.slicer_init("INVOKE_DEFAULT")
+    pass
 
 @persistent
 def on_save_pre(*args):
