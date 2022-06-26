@@ -21,8 +21,8 @@ http://blender.stackexchange.com/questions/14202/index-out-of-range-for-uilist-c
 bl_info = {
     "name": "openPlan",
     "author": "Georgi Talmazov, Patrick R. Moore",
-    "version": (3, 1),
-    "blender": (2, 93, 0),
+    "version": (3, 2),
+    "blender": (3, 2, 0),
     "location": "3D View -> UI SIDE PANEL",
     "description": "Blender and 3D Slicer sync add-on.",
     "warning": "",
@@ -53,7 +53,9 @@ from xml.etree.ElementTree import Element, SubElement, Comment, ElementTree, tos
 #Blender
 from bpy.types import Operator, AddonPreferences
 from bpy.app.handlers import persistent
-from io_mesh_ply import export_ply
+
+#copied from b2.83 LTS
+from . import export_ply
 
 #TCP sock lib
 from .slicer_module import comm as asyncsock
@@ -222,11 +224,23 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                 else:
                     temp_file = os.path.join(settings.tmp_dir, ob.name + ".ply")
                     ret = export_ply.save_mesh(temp_file, me,
-                            use_normals=False,
-                            use_uv_coords=False,
-                            use_colors=False,
-                            use_ascii=False,
+                                use_normals=False,
+                                use_uv_coords=False,
+                                use_colors=False
                             )
+                    '''
+                    bpy.ops.object.select_all(action='DESELECT')
+                    ob.select_set(True)
+                    bpy.ops.export_mesh.ply(
+                        filepath = temp_file,
+                        use_selection = True,
+                        check_existing = False,
+                        use_normals = False,
+                        use_uv_coords = False,
+                        use_colors = False,
+                        use_ascii = False,
+                    )
+                    '''
 
                     x_scene = build_xml_scene([ob], group)
                     xml_str = tostring(x_scene).decode()
@@ -282,9 +296,21 @@ def send_obj_to_slicer(objects = [], group = 'SlicerLink'):
                         ret = export_ply.save_mesh(temp_file, me,
                                 use_normals=False,
                                 use_uv_coords=False,
-                                use_colors=False,
-                                use_ascii=False,
-                                )
+                                use_colors=False
+                            )
+                        '''
+                        bpy.ops.object.select_all(action='DESELECT')
+                        ob.select_set(True)
+                        bpy.ops.export_mesh.ply(
+                            filepath = temp_file,
+                            use_selection = True,
+                            check_existing = False,
+                            use_normals = False,
+                            use_uv_coords = False,
+                            use_colors = False,
+                            use_ascii = False,
+                        )
+                        '''
 
                         x_scene = build_xml_scene([ob], group)
                         xml_str = tostring(x_scene).decode()
@@ -532,6 +558,31 @@ def resize_slice_plane(planeBMesh, width, height, axes):
 
     return bm
 
+#https://blenderartists.org/t/modifying-object-origin-with-python/507305/2
+def getGeometryCenter(obj):
+		sumWCoord = [0,0,0]
+		numbVert = 0
+		if obj.type == 'MESH':
+			for vert in obj.data.vertices:
+				wmtx = obj.matrix_world
+				worldCoord = vert.co @ wmtx
+				sumWCoord[0] += worldCoord[0]
+				sumWCoord[1] += worldCoord[1]
+				sumWCoord[2] += worldCoord[2]
+				numbVert += 1
+			sumWCoord[0] = sumWCoord[0]/numbVert
+			sumWCoord[1] = sumWCoord[1]/numbVert
+			sumWCoord[2] = sumWCoord[2]/numbVert
+		return sumWCoord
+def setOriginToCenter(obj):
+    oldLoc = obj.location
+    newLoc = getGeometryCenter(obj)
+    for vert in obj.data.vertices:
+        vert.co[0] -= newLoc[0] - oldLoc[0]
+        vert.co[1] -= newLoc[1] - oldLoc[1]
+        vert.co[2] -= newLoc[2] - oldLoc[2]
+    obj.location = newLoc 
+
 #https://github.com/florianfelix/io_import_images_as_planes_rewrite/blob/master/io_import_images_as_planes.py#L918
 def live_img_update(image):
     sliceName, modelName, image_dim, plane_dim, image_np = image.split("_BREAK_")
@@ -553,15 +604,15 @@ def live_img_update(image):
         outputImg.generated_height = image_h
 
     outputImg.pixels = ((np.asarray(image_np))*1/255).flatten()
-
-    me = bpy.data.meshes.get(modelName)
+    
+    me = bpy.data.meshes.get(bpy.data.objects[modelName].data.name)
     bm = bmesh.new()
     bm.from_mesh(me)
     if hasattr(bm.verts, "ensure_lookup_table"): 
-            bm.edges.ensure_lookup_table()
-            # only if you need to:
-            # bm.edges.ensure_lookup_table()   
-            # bm.faces.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        # only if you need to:
+        # bm.edges.ensure_lookup_table()   
+        # bm.faces.ensure_lookup_table()
     '''
     print(int(bm.edges[0].calc_length()))
     print(int(plane_h/10))
@@ -569,20 +620,41 @@ def live_img_update(image):
     print(int(plane_w/10))
     '''
     if not int(bm.edges[0].calc_length()) == int(plane_h/10) or not int(bm.edges[1].calc_length()) == int(plane_w/10):
+        #we have to be able to select the slice view plane in order to alter it
+        if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
+            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
+            ob.hide_select = False
+        if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
+            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
+            ob.hide_select = False
+        if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
+            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
+            ob.hide_select = False
+
         bm = resize_slice_plane(bm, plane_w/10, plane_h/10, [0,1])
         bm.to_mesh(me)
         bm.free()
         me.update()
         bm = None
-        #asyncsock.socket_obj.sock_handler[0].send_data("DEL", modelName)
-        bpy.context.view_layer.objects.active = bpy.data.objects.get(modelName)
-        bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+        #bpy.context.view_layer.objects.active = bpy.data.objects.get(modelName)
+        #bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+        setOriginToCenter(bpy.data.objects.get(modelName))
         send_obj_to_slicer([modelName], "ViewLink")
-        print("plane replaced!")
+        if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
+            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
+            ob.hide_select = True
+        if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
+            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
+            ob.hide_select = True
+        if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
+            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
+            ob.hide_select = True
+        #print("plane replaced!")
+
     if bm is not None:
         bm.free()
         me.update()
-        print("plane NOT replaced")
+        #print("plane NOT replaced")
     #bpy.context.view_layer.objects.active = bpy.data.objects.get("Plane")
     #bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
     #set our delete mode
@@ -649,8 +721,9 @@ def export_to_slicer(scene):
         if view_obs is not []:
             x_scene = build_xml_scene(view_obs, "ViewLink")
             xml_str = tostring(x_scene).decode()
-            asyncsock.socket_obj.sock_handler[0].send_data("VIEW_UPDATE", xml_str)
-            print("sent view update command")
+            if scene.slice_view_on == True:
+                asyncsock.socket_obj.sock_handler[0].send_data("VIEW_UPDATE", xml_str)
+            #print("sent view update command")
     
 
     """
@@ -732,7 +805,7 @@ class StartSlicerLinkServer(bpy.types.Operator):
     
     def execute(self,context):
         if asyncsock.socket_obj == None:
-            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
+            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
             context.scene.socket_state = "SERVER"
 
@@ -769,34 +842,40 @@ class Start3DSlicer(bpy.types.Operator):
                     "\tfor patientUID in patientUIDs:\n",
                     "\t\tloadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))\n",
                     "slicer.util.selectModule('BlenderMonitor')\n",
+                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s)\n"%bpy.context.preferences.addons[__name__].preferences.slicer_3dview,
                     "slicer.util.setSliceViewerLayers(background=slicer.util.getNode(loadedNodeIDs[0]))\n",
-                    "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = slicer.util.getNode(loadedNodeIDs[0])"
+                    "slicer.util.getModuleWidget('BlenderMonitor').workingVolume = slicer.util.getNode(loadedNodeIDs[0])\n",
+                    "slicer.util.getModuleWidget('BlenderMonitor').connect_to_blender('%s', %d)"%(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
                 ))
             elif os.path.splitext(context.scene.DICOM_dir)[1].lower() == ".mrb":
                 slicer_startup_parameters = ''.join((
                     "slicer.util.selectModule('BlenderMonitor')\n",
+                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s)\n"%bpy.context.preferences.addons[__name__].preferences.slicer_3dview,
                     "slicer.util.loadScene('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
+                    "slicer.util.getModuleWidget('BlenderMonitor').connect_to_blender('%s', %d)\n"%(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
                 ))
                 if len(context.scene.linked_models) > 0:
                     models = ""
                     for model in context.scene.linked_models:
                         models += model.name + ","
                     slicer_startup_parameters += slicer_startup_parameters.join((
-                        "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().sock.send_data('CHECK', 'LINK_MULTIPLE_BREAK_%s')\n"%(models[:-1]),
+                        "slicer.util.getModuleWidget('BlenderMonitor').sock.send_data('CHECK', 'LINK_MULTIPLE_BREAK_%s')\n"%(models[:-1]),
                     ))
             else:
                 slicer_startup_parameters = ''.join((
                     "volumeNode = slicer.util.loadVolume('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
                     "slicer.util.selectModule('BlenderMonitor')\n",
+                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s)\n"%bpy.context.preferences.addons[__name__].preferences.slicer_3dview,
                     "slicer.util.setSliceViewerLayers(background=volumeNode)\n",
-                    "slicer.util.getModule('BlenderMonitor').widgetRepresentation().self().workingVolume = volumeNode"
+                    "slicer.util.getModuleWidget('BlenderMonitor').workingVolume = volumeNode\n",
+                    "slicer.util.getModuleWidget('BlenderMonitor').connect_to_blender('%s', %d)"%(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
                 ))
             if platform.system() == "Windows": #windows support
                 asyncsock.slicer_sysprocess = subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer), "--python-code", slicer_startup_parameters])
             elif platform.system() == "Darwin": #macOS support
                 bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer = "/Applications/Slicer.app/Contents/MacOS/Slicer"
                 asyncsock.slicer_sysprocess = subprocess.Popen([bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "--python-code", slicer_startup_parameters])
-            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(context.scene.host_addr, int(context.scene.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
+            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
             context.scene.socket_state = "SERVER"
 
@@ -824,7 +903,7 @@ class StartSlicerLinkClient(bpy.types.Operator):
         ShowMessageBox("Client not yet available.", "openPlan Info:")
         return {'FINISHED'}
         if asyncsock.socket_obj == None:
-            asyncsock.socket_obj = asyncsock.BlenderComm.EchoClient(context.scene.host_addr, int(context.scene.host_port))
+            asyncsock.socket_obj = asyncsock.BlenderComm.EchoClient(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start)
             context.scene.socket_state = "CLIENT"
             print("client started -> ")
@@ -875,7 +954,7 @@ class DEL_type_props(bpy.types.PropertyGroup):
         item = (str(del_type[i]), str(del_type[i]), str(""), int(i))
         items.append(item)
 
-    Mode: bpy.props.EnumProperty(items=items, description="", default="Blender")
+    Mode: bpy.props.EnumProperty(items=items, description="", default="Both")
 
 class deleteObjectsBoth(bpy.types.Operator):
     """
@@ -909,7 +988,7 @@ class deleteObjectsBoth(bpy.types.Operator):
         elif "Both" in del_mode:
             if not asyncsock.socket_obj == None:
                 packet = ""
-                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects if ob.name not in bpy.data.collections.get("ViewLink").objects]:
+                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects if (ob.name not in bpy.data.collections.get("ViewLink").objects) or (ob.name in bpy.data.collections.get("ViewLink").objects and context.scene.slice_view_on == False)]:
                     #asyncsock.socket_obj.sock_handler[0].send_data("DEL", ob.name)
                     packet = packet + ob[1] + ","
                     if ob[1] in sg.objects: 
@@ -955,7 +1034,7 @@ class AddSliceView(bpy.types.Operator):
     Add slice operator inserts a plane and links it to 3D Slicer. Configures the 3D Slicer panel for additional config. input.
     """
     bl_idname = "link_slicer.add_slice_view"
-    bl_label = "Add View"
+    bl_label = "Enable Views"
     
     def execute(self,context):
         if asyncsock.socket_obj is not None:
@@ -973,6 +1052,8 @@ class AddSliceView(bpy.types.Operator):
                 bpy.data.objects.get(context.scene.slice_name + "_transverse_slice").data.name = context.scene.slice_name + "_transverse_slice"
 
                 ob = bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") #869
+                if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
+                    ob.hide_select = True
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
                 bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
                 #ob.hide_select = True # not possible b/c when resizing the plane we rely on being able to select it in order to reset the origin, when selection is disabled this cannot happen and plane is not centered appropriately
@@ -986,6 +1067,8 @@ class AddSliceView(bpy.types.Operator):
                 bpy.data.objects.get(context.scene.slice_name + "_tangential_slice").data.name = context.scene.slice_name + "_tangential_slice"
 
                 ob = bpy.data.objects.get(context.scene.slice_name + "_tangential_slice")
+                if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
+                    ob.hide_select = True
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
                 bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
                 #ob.hide_select = True
@@ -999,6 +1082,8 @@ class AddSliceView(bpy.types.Operator):
                 bpy.data.objects.get(context.scene.slice_name + "_freeview_slice").data.name = context.scene.slice_name + "_freeview_slice"
 
                 ob = bpy.data.objects.get(context.scene.slice_name + "_freeview_slice")
+                if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
+                    ob.hide_select = True
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
                 bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
                 #ob.hide_select = True
@@ -1016,9 +1101,10 @@ class AddSliceView(bpy.types.Operator):
             #time.sleep(1)
             #send_obj_to_slicer([context.scene.slice_name + "_tangential_slice"], "ViewLink")
             #send_obj_to_slicer([context.scene.slice_name + "_freeview_slice"], "ViewLink")
-            time.sleep(1)
+            time.sleep(0.25)
             #bpy.ops.object.select_all(action='DESELECT')
             asyncsock.socket_obj.sock_handler[0].send_data("SETUP_SLICE", context.scene.slice_name)
+            context.scene.slice_view_on = True
             
         return {'FINISHED'}
 
@@ -1027,27 +1113,35 @@ class DeleteSliceView(bpy.types.Operator):
     Delete slice operator removes selected plane's texture image, material node, and object itself. Resets 3D Slicer UI Panel.
     """
     bl_idname = "link_slicer.delete_slice_view"
-    bl_label = "Delete View"
+    bl_label = "Disable Views"
     
     def execute(self,context):
         if asyncsock.socket_obj is not None:
-            if bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") is not None and bpy.data.objects.get(context.scene.slice_name + "_tangential_slice") is not None:
+            if bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") is not None and bpy.data.objects.get(context.scene.slice_name + "_tangential_slice") is not None and bpy.data.objects.get(context.scene.slice_name + "_freeview_slice") is not None:
+                if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
+                    ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
+                    ob.hide_select = False
+                if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
+                    ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
+                    ob.hide_select = False
+                if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
+                    ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
+                    ob.hide_select = False
                 bpy.ops.object.select_all(action='DESELECT')
-                for slice in [context.scene.slice_name + "_transverse_slice", context.scene.slice_name + "_tangential_slice"]:
-                    for material in bpy.data.objects[slice].data.materials:
-                        if material.name in bpy.data.images.keys():
-                            bpy.data.images[material.name].user_clear()
-                            bpy.data.images.remove(bpy.data.images[material.name])
-                        material.user_clear()
+                for slice in [context.scene.slice_name + "_transverse_slice", context.scene.slice_name + "_tangential_slice", context.scene.slice_name + "_freeview_slice"]:
+                    slice_materials = bpy.data.objects[slice].data.materials
+                    for material in slice_materials:
+                        images = bpy.data.images.keys()
+                        if material.name in images:
+                            mat_imgs = bpy.data.images[material.name]
+                            bpy.data.images.remove(mat_imgs)
                         bpy.data.materials.remove(material)
                     
                     bpy.data.objects[slice].select_set(state=True)
-
+                context.scene.slice_view_on = False
                 bpy.context.scene.DEL_type_props.Mode = "Both"
                 bpy.ops.link_slicer.delete_objects_both("INVOKE_DEFAULT")
                 asyncsock.socket_obj.sock_handler[0].send_data("DEL_SLICE", context.scene.slice_name)
-
-            
         return {'FINISHED'}
 
 class SlicerLinkPreferences(bpy.types.AddonPreferences):
@@ -1057,6 +1151,12 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
     tmp_dir = os.path.join(self_dir, "slicer_module", "tmp")
     tmp_dir : bpy.props.StringProperty(name="Temp Folder", default=tmp_dir, subtype='DIR_PATH')
     dir_3d_slicer : bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='FILE_PATH')
+    host_addr : bpy.props.StringProperty(name = "Host", description = "", default = asyncsock.address[0])
+    host_port : bpy.props.StringProperty(name = "Port", description = "TCP/IP Comm Port", default = str(asyncsock.address[1]))
+    slicer_3dview : bpy.props.BoolProperty(name = "Enable/Disable Slicer 3D view.", default = False, description = "Enabling 3D view in slicer overrides and disables pantomograph feature.")
+    lock_transverse_trans : bpy.props.BoolProperty(name = "Lock Transverse Transform", default = True, description = "Enabling locks ability to transform view in Blender.")
+    lock_tangential_trans : bpy.props.BoolProperty(name = "Lock Tangential Transform", default = True, description = "Enabling locks ability to transform view in Blender.")
+    lock_freeview_trans : bpy.props.BoolProperty(name = "Lock Freeview Transform", default = False, description = "Enabling locks ability to transform view in Blender.")
     
 
     def draw(self, context):
@@ -1070,6 +1170,17 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
         row.prop(self, "tmp_dir")
         row = layout.row()
         row.prop(self, "dir_3d_slicer")
+        row = layout.row()
+        row.prop(self, "host_addr")
+        row.prop(self, "host_port")
+        row = layout.row()
+        row.prop(self, "slicer_3dview")
+        row = layout.row()
+        row.prop(self, "lock_transverse_trans")
+        row = layout.row()
+        row.prop(self, "lock_tangential_trans")
+        row = layout.row()
+        row.prop(self, "lock_freeview_trans")
 
 
 class SlicerLinkPanel(bpy.types.Panel):
@@ -1196,6 +1307,7 @@ def on_load_post(*args):
 @persistent
 def on_save_pre(*args):
     #bpy.context.scene.socket_state = "NONE"
+    bpy.ops.link_slicer.delete_slice_view("INVOKE_DEFAULT") # - need to figure out a way to manage the slice views on save/load
     bpy.context.scene.linked_models.clear()
     if "SlicerLink" in bpy.data.collections:
         for obj in bpy.data.collections['SlicerLink'].objects:
@@ -1227,13 +1339,12 @@ def register():
     bpy.types.Scene.legacy_vertex_threshold = bpy.props.IntProperty(name="Vertex Threshold", description="Legacy IO Vertex Threshold", default=3)
 
     #register host address, port input, state=NONE/CLIENT/SERVER
-    bpy.types.Scene.host_addr = bpy.props.StringProperty(name = "Host", description = "Enter the host PORT the server to listen on OR client to connect to.", default = asyncsock.address[0])
-    bpy.types.Scene.host_port = bpy.props.StringProperty(name = "Port", description = "Enter the host PORT the server to listen on OR client to connect to.", default = str(asyncsock.address[1]))
     bpy.types.Scene.socket_state = bpy.props.StringProperty(name="socket_state", default="NONE")
 
     bpy.types.Scene.overwrite = bpy.props.BoolProperty(name = "Overwrite", default = True, description = "If False, will add objects, if True, will replace entire group with selection")
 
     bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view_obj")
+    bpy.types.Scene.slice_view_on = bpy.props.BoolProperty(name = "Slice View Mode", default = False, description = "")
     
     bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH')
     bpy.utils.register_class(linked_models_collection)
@@ -1278,11 +1389,10 @@ def unregister():
     if on_save_post in bpy.app.handlers.save_post:
         bpy.app.handlers.save_post.remove(on_save_post)
 
-    del bpy.types.Scene.host_addr
-    del bpy.types.Scene.host_port
     del bpy.types.Scene.socket_state
     del bpy.types.Scene.overwrite
     del bpy.types.Scene.slice_name
+    del bpy.types.Scene.slice_view_on
 
     #del bpy.types.Scene.dir_3d_slicer
     #del bpy.types.Scene.DICOM_dir

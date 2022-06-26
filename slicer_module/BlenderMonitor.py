@@ -66,11 +66,13 @@ class BlenderMonitorWidget:
 
         self.watching = True #False before but now we are automating things
         self.sock = None
+        self.host_address = asyncsock.address[0]
+        self.host_port = asyncsock.address[1]
         self.sliceSock = None
         self.SlicerSelectedModelsList = []
-        #self.toSync = []
         #slice list
         self.sliceViewCache = {}
+        self.slicer_3dview = False
         self.workingVolume = None
 
         self.legacy_sync = None #True
@@ -88,49 +90,10 @@ class BlenderMonitorWidget:
 
         # Layout within the sample collapsible button
         self.sampleFormLayout = qt.QFormLayout(sampleCollapsibleButton)
-
-        '''
-        # Input volume node selector
-        inputVolumeNodeSelector = slicer.qMRMLNodeComboBox()
-        inputVolumeNodeSelector.objectName = 'inputVolumeNodeSelector'
-        inputVolumeNodeSelector.toolTip = "Select a fiducial list to define control points for the path."
-        inputVolumeNodeSelector.nodeTypes = ['vtkMRMLVolumeNode']
-        inputVolumeNodeSelector.noneEnabled = True
-        inputVolumeNodeSelector.addEnabled = False
-        inputVolumeNodeSelector.removeEnabled = False
-        inputVolumeNodeSelector.connect('currentNodeChanged(vtkMRMLNode*)', self.onbtn_select_volumeClicked)
-        self.sampleFormLayout.addRow("Input Volume:", inputVolumeNodeSelector)
-        self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)',
-                            inputVolumeNodeSelector, 'setMRMLScene(vtkMRMLScene*)')
-        '''
-        '''
-        self.host_address = qt.QLineEdit()
-        self.host_address.setText(str(asyncsock.address[0]))
-        self.sampleFormLayout.addRow("Host:", self.host_address)
-        
-        self.host_port = qt.QLineEdit()
-        self.host_port.setText(str(asyncsock.address[1]))
-        self.sampleFormLayout.addRow("Port:", self.host_port)
-        '''
-        self.host_address = asyncsock.address[0]
-        self.host_port = asyncsock.address[1]
-
-        
         self.log_debug = qt.QCheckBox()
         #self.log_debug.setText("Debug: ")
         self.log_debug.setChecked(True)
         self.sampleFormLayout.addRow("Debug:", self.log_debug)
-        
-        '''
-        # connect button
-        playButton = qt.QPushButton("Connect")
-        playButton.toolTip = "Connect to configured server."
-        playButton.checkable = True
-        self.sampleFormLayout.addRow(playButton)
-        playButton.connect('toggled(bool)', self.onPlayButtonToggled)
-        self.playButton = playButton
-        '''
-        self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), int(self.host_port), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params), ("VIEW_UPDATE", self.slice_view_update_scene), ("SAVE", self.save_project)], self.log_debug.isChecked())
 
         #Models list
         addModelButton = qt.QPushButton("Add Model")
@@ -138,7 +101,23 @@ class BlenderMonitorWidget:
         self.sampleFormLayout.addRow(addModelButton)
         addModelButton.connect('clicked()', self.onaddModelButtonToggled)
 
+    def config_layout(self, slicer_3dview):
+        self.slicer_3dview = slicer_3dview
         customLayoutId = 501
+        if self.slicer_3dview:
+            view_mode = """
+            <view class="vtkMRMLViewNode" singletontag="3D">
+             <property name="viewlabel" action="default">3D</property>
+            </view>
+            """
+        else:
+            view_mode = """
+            <view class="vtkMRMLSliceNode" singletontag="2D" verticalStretch="0">
+             <property name="orientation" action="default">Reformat</property>
+             <property name="viewlabel" action="default">P</property>
+             <property name="viewcolor" action="default">#000000</property>
+            </view>
+            """
         XML_layout = """
         <layout type="vertical" split="true" >
          <item splitSize="500">
@@ -169,11 +148,7 @@ class BlenderMonitorWidget:
          <item splitSize="500">
           <layout type="horizontal">
            <item>
-            <view class="vtkMRMLSliceNode" singletontag="2D" verticalStretch="0">
-             <property name="orientation" action="default">Reformat</property>
-             <property name="viewlabel" action="default">P</property>
-             <property name="viewcolor" action="default">#000000</property>
-            </view>
+           %s
            </item>
            <item>
             <view class="vtkMRMLSliceNode" singletontag="view_freeview_slice">
@@ -185,10 +160,15 @@ class BlenderMonitorWidget:
           </layout>
          </item>
         </layout>
-        """
+        """%view_mode
         lm = slicer.app.layoutManager()
         lm.layoutLogic().GetLayoutNode().AddLayoutDescription(customLayoutId, XML_layout)
         lm.setLayout(customLayoutId)
+
+    def connect_to_blender(self, host, port):
+        self.host_address = host
+        self.host_port = port
+        self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), int(self.host_port), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params), ("VIEW_UPDATE", self.slice_view_update_scene), ("SAVE", self.save_project)], self.log_debug.isChecked())
 
     def onaddModelButtonToggled(self): #, select = None):
         for model in self.SlicerSelectedModelsList:
@@ -610,9 +590,15 @@ class BlenderMonitorWidget:
         modelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
         
         if((bool(self.sliceViewCache)) and (x_scene[0].get('name') in [slice+"_transverse_slice" for slice in self.sliceViewCache.keys()] or x_scene[0].get('name') in [slice+"_tangential_slice" for slice in self.sliceViewCache.keys()])):
-            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
+            if self.slicer_3dview:
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed', 'vtkMRMLViewNode3D'))
+            else:
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
         else:
-            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice"))
+            if self.slicer_3dview:
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice", 'vtkMRMLViewNode3D'))
+            else:
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice",))
 
 
         #update object location in scene
@@ -644,9 +630,15 @@ class BlenderMonitorWidget:
         modelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
 
         if((bool(self.sliceViewCache)) and (x_scene[0].get('name') in [slice+"_transverse_slice" for slice in self.sliceViewCache.keys()] or x_scene[0].get('name') in [slice+"_tangential_slice" for slice in self.sliceViewCache.keys()])):
-            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
+            if self.slicer_3dview:
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed', 'vtkMRMLViewNode3D'))
+            else:
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
         else:
-            modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice"))
+            if self.slicer_3dview:
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice", 'vtkMRMLViewNode3D'))
+            else:
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice",))
 
         self.update_scene(data)
 
@@ -733,13 +725,13 @@ class BlenderMonitorWidget:
                 self.sliceViewLayout.addRow("Tangential:", self.rotateView)
 
                 #Freeview slice sliders
-                freeviewCollapsibleButton = ctk.ctkCollapsibleButton()
-                freeviewCollapsibleButton.text = "Free View Controls"
-                freeviewCollapsibleButton.enabled = True #originally FALSE
-                layout.addWidget(freeviewCollapsibleButton)
+                self.freeviewCollapsibleButton = ctk.ctkCollapsibleButton()
+                self.freeviewCollapsibleButton.text = "Free View Controls"
+                self.freeviewCollapsibleButton.enabled = True #originally FALSE
+                layout.addWidget(self.freeviewCollapsibleButton)
 
                 # Layout within the Flythrough collapsible button
-                freeviewFormLayout = qt.QFormLayout(freeviewCollapsibleButton)
+                freeviewFormLayout = qt.QFormLayout(self.freeviewCollapsibleButton)
                 # Frame slider
                 self.fv_tan_slider = ctk.ctkSliderWidget()
                 self.fv_tan_slider.connect('valueChanged(double)', self.freeViewAngles)
@@ -754,43 +746,49 @@ class BlenderMonitorWidget:
                 self.fv_ax_slider.maximum = 360
                 freeviewFormLayout.addRow("Axial Angle:", self.fv_ax_slider)
 
-                label = qt.QLabel()
-                label.text = ""
-                self.sliceViewLayout.addRow("Pantomograph ROI", label)
+                if self.widgetClass.slicer_3dview == False:
+                    label = qt.QLabel()
+                    label.text = ""
+                    self.sliceViewLayout.addRow("Pantomograph ROI", label)
 
-                self.curve_res = qt.QLineEdit()
-                self.curve_res.setText(1.0)
-                self.slice_res = qt.QLineEdit()
-                self.slice_res.setText(0.5)
-                self.sliceViewLayout.addRow("Curve Resolution:", self.curve_res)
-                self.sliceViewLayout.addRow("Slice Resolution:", self.slice_res)
+                    self.curve_res = qt.QLineEdit()
+                    self.curve_res.setText(1.0)
+                    self.slice_res = qt.QLineEdit()
+                    self.slice_res.setText(0.5)
+                    self.sliceViewLayout.addRow("Curve Resolution:", self.curve_res)
+                    self.sliceViewLayout.addRow("Slice Resolution:", self.slice_res)
 
-                self.pano_x = qt.QLineEdit()
-                self.pano_x.setText(100)
-                self.pano_y = qt.QLineEdit()
-                self.pano_y.setText(25)
-                self.sliceViewLayout.addRow("Slice Height (mm):", self.pano_x)
-                self.sliceViewLayout.addRow("Slice Width (mm):", self.pano_y)
+                    self.pano_x = qt.QLineEdit()
+                    self.pano_x.setText(100)
+                    self.pano_y = qt.QLineEdit()
+                    self.pano_y.setText(25)
+                    self.sliceViewLayout.addRow("Slice Height (mm):", self.pano_x)
+                    self.sliceViewLayout.addRow("Slice Width (mm):", self.pano_y)
 
-                # Build Pantomograph button
-                self.PantomographButton = qt.QPushButton("Show Pantomograph")
-                self.PantomographButton.toolTip = "Show pantomograph from selected curve path."
-                self.sliceViewLayout.addRow(self.PantomographButton)
-                self.PantomographButton.connect('clicked()', self.onPantomographButtonToggled)
+                    # Build Pantomograph button
+                    self.PantomographButton = qt.QPushButton("Show Pantomograph")
+                    self.PantomographButton.toolTip = "Show pantomograph from selected curve path."
+                    self.sliceViewLayout.addRow(self.PantomographButton)
+                    self.PantomographButton.connect('clicked()', self.onPantomographButtonToggled)
 
-                self.normal_angle = ctk.ctkSliderWidget()
-                self.normal_angle.connect('valueChanged(double)', self.rotate_normal)
-                #self.normal_angle.decimals = 0.0
-                #self.normal_angle.singleStep = 1
-                self.normal_angle.minimum = 0
-                self.normal_angle.maximum = 360
-                self.sliceViewLayout.addRow("View Angle:", self.normal_angle)
+                    self.normal_angle = ctk.ctkSliderWidget()
+                    self.normal_angle.connect('valueChanged(double)', self.rotate_normal)
+                    #self.normal_angle.decimals = 0.0
+                    #self.normal_angle.singleStep = 1
+                    self.normal_angle.minimum = 0
+                    self.normal_angle.maximum = 360
+                    self.sliceViewLayout.addRow("View Angle:", self.normal_angle)
 
                 slicer.util.getNode(self.plane_model + "_transverse_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',)) #('vtkMRMLViewNode1', 'vtkMRMLSliceNodeRed', 'vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow')
                 #slicer.util.getNode(self.plane_model + "_transverse_slice").GetDisplayNode().Modified()
                 slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
                 #slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().Modified()
                 slicer.util.getNode(self.plane_model + "_freeview_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
+
+                self.slice_dims_buff = {self.plane_model + "_transverse_slice" : None,
+                                        self.plane_model + "_tangential_slice" : None,
+                                        self.plane_model + "_freeview_slice" : None
+                                        }
                 
                 #self.widgetClass.slice_view_numpy("Green", self.plane_model + "_transverse", self.sliceSock, mode="NEW")
                 #self.sliceSock.send_data("SELECT_OBJ", self.plane_model + "_transverse")
@@ -878,8 +876,8 @@ class BlenderMonitorWidget:
                 if self.curvePoints is not None:
                     self.f = int(f)
                     try:
-                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_transverse_slice", slicer.util.getNode(self.plane_model + "_transverse_slice"), int(self.get_slice_img_dims("view_transverse_slice")[0]/9))
-                        self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_transverse_slice"), self.widgetClass.sock, "ViewLink")
+                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_transverse_slice", slicer.util.getNode(self.plane_model + "_transverse_slice"), int(self.get_slice_img_dims("view_transverse_slice")[0]/10))
+                        #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_transverse_slice"), self.widgetClass.sock, "ViewLink")
                         self.widgetClass.slice_view_numpy("view_transverse_slice", self.plane_model + "_transverse_slice", self.sliceSock, mode="UPDATE")
                         time.sleep(0.5)
                     except slicer.util.MRMLNodeNotFoundException: print("node not found")
@@ -890,8 +888,8 @@ class BlenderMonitorWidget:
             def tangentialAngle(self, angle):
                 if self.curvePoints is not None:
                     try:
-                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_tangential_slice", slicer.util.getNode(self.plane_model + "_tangential_slice"), int(self.get_slice_img_dims("view_tangential_slice")[0]/9), angle)
-                        self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential_slice"), self.widgetClass.sock, "ViewLink")
+                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_tangential_slice", slicer.util.getNode(self.plane_model + "_tangential_slice"), int(self.get_slice_img_dims("view_tangential_slice")[0]/10), angle)
+                        #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential_slice"), self.widgetClass.sock, "ViewLink")
                         self.widgetClass.slice_view_numpy("view_tangential_slice", self.plane_model + "_tangential_slice", self.sliceSock, mode="UPDATE")
                         time.sleep(0.5)
                     except slicer.util.MRMLNodeNotFoundException: print("node not found")
@@ -902,8 +900,8 @@ class BlenderMonitorWidget:
             def freeViewAngles(self, event_val):
                 if self.curvePoints is not None:
                     try:
-                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_freeview_slice", slicer.util.getNode(self.plane_model + "_freeview_slice"), int(self.get_slice_img_dims("view_freeview_slice")[0]/9), self.fv_tan_slider.value, self.fv_ax_slider.value)
-                        self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_freeview_slice"), self.widgetClass.sock, "ViewLink")
+                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_freeview_slice", slicer.util.getNode(self.plane_model + "_freeview_slice"), int(self.get_slice_img_dims("view_freeview_slice")[0]/10), self.fv_tan_slider.value, self.fv_ax_slider.value)
+                        #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_freeview_slice"), self.widgetClass.sock, "ViewLink")
                         self.widgetClass.slice_view_numpy("view_freeview_slice", self.plane_model + "_freeview_slice", self.sliceSock, mode="UPDATE")
                         time.sleep(0.5)
                     except slicer.util.MRMLNodeNotFoundException: print("node not found")
@@ -941,6 +939,19 @@ class BlenderMonitorWidget:
                     self.curvePoints = node.GetCurvePointsWorld()
                     self.frameSlider.maximum = self.curvePoints.GetNumberOfPoints()-2
                     self.curveNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice"))
+                    for i in range(1,2):
+                        self.transverseStep(i)
+                    for i in range(1,2):
+                        self.tangentialAngle(i)
+                    
+                    for i in range(1,2):
+                        self.fv_tan_slider.value = i
+                        self.freeViewAngles(i)
+                    '''
+                    for i in range(1,2):
+                        self.fv_ax_slider.value = i
+                        self.freeViewAngles(i)
+                    '''
                 else: pass
 
             def onPantomographButtonToggled(self):
@@ -1034,14 +1045,18 @@ class BlenderMonitorWidget:
         self.sliceViewCache[name].inputFiducialsNodeSelector.deleteLater()
         self.sliceViewCache[name].frameSlider.deleteLater()
         self.sliceViewCache[name].rotateView.deleteLater()
-        self.sliceViewCache[name].curve_res.deleteLater()
-        self.sliceViewCache[name].slice_res.deleteLater()
-        self.sliceViewCache[name].pano_x.deleteLater()
-        self.sliceViewCache[name].pano_y.deleteLater()
-        self.sliceViewCache[name].PantomographButton.deleteLater()
-        self.sliceViewCache[name].normal_angle.deleteLater()
+        self.sliceViewCache[name].fv_tan_slider.deleteLater()
+        self.sliceViewCache[name].fv_ax_slider.deleteLater()
+        if self.slicer_3dview == False:
+            self.sliceViewCache[name].curve_res.deleteLater()
+            self.sliceViewCache[name].slice_res.deleteLater()
+            self.sliceViewCache[name].pano_x.deleteLater()
+            self.sliceViewCache[name].pano_y.deleteLater()
+            self.sliceViewCache[name].PantomographButton.deleteLater()
+            self.sliceViewCache[name].normal_angle.deleteLater()
         self.sliceViewCache[name].sliceViewLayout.deleteLater()
         self.sliceViewCache[name].sliceViewSettings.deleteLater()
+        self.sliceViewCache[name].freeviewCollapsibleButton.deleteLater()
         del self.sliceViewCache[name]
         #self.layout.update()
 
@@ -1111,10 +1126,23 @@ class BlenderMonitorWidget:
         #print(capturedImage)
         #print(capturedImage.GetDimensions())
         #print(imageSize)
+        #print(modelName)
         #image_w = capturedImage.GetDimensions()[0]
         #image_h = capturedImage.GetDimensions()[1]
-        if mode == "NEW": socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
-        if mode == "UPDATE": socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
+        if self.sliceViewCache["view_obj"].slice_dims_buff[modelName] is None:
+            mode = "NEW"
+            self.sliceViewCache["view_obj"].slice_dims_buff[modelName] = imageSize
+        elif self.sliceViewCache["view_obj"].slice_dims_buff[modelName] is not None and self.sliceViewCache["view_obj"].slice_dims_buff[modelName] != imageSize:
+            mode = "NEW"
+            self.sliceViewCache["view_obj"].slice_dims_buff[modelName] = imageSize
+        elif self.sliceViewCache["view_obj"].slice_dims_buff[modelName] is not None and self.sliceViewCache["view_obj"].slice_dims_buff[modelName] == imageSize:
+            mode = "UPDATE"
+        #print(mode)
+        if mode == "NEW":
+            socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
+        if mode == "UPDATE":
+            socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
+            self.update_scene_blender(slicer.util.getNode(modelName), socket, "ViewLink")
 
     def slice_view_update_scene(self,  xml):
         self.update_scene(xml)

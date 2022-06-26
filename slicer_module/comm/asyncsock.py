@@ -60,6 +60,7 @@ class SlicerComm():
             self.socket.readyRead.connect(self.handle_read)
             self.socket.connected.connect(self.handle_connected)
             self.socket.disconnected.connect(self.handle_close)
+            self.data_pkt_buff = ""
             if handle is not None: 
                 for CMD, handler in handle:
                     self.cmd_ops[CMD] = handler
@@ -74,8 +75,11 @@ class SlicerComm():
             print("DISCONNECTED")
 
         def handle_read(self):
-            while True:
-                data = self.socket.read(5242880)
+            data_buff = ""
+            timeout = 10 # seconds
+            timeout_start = time.time()
+            while time.time() < timeout_start + timeout:
+                data_buff = self.socket.read(5242880)
                 #print(data)
                 '''
                 self.received_data.append(data.data().decode())
@@ -85,25 +89,33 @@ class SlicerComm():
                     self.received_data = []
                     break
                 '''
-                data = data.data().decode()
-                if packet_terminator in data:
-                    data = data.replace(packet_terminator, '')
+                self.data_pkt_buff += data_buff.data().decode()
+                #print(self.data_pkt_buff)
+                if packet_terminator in self.data_pkt_buff:
+                    data = self.data_pkt_buff.replace(packet_terminator, '')
                     data = data.split(' net_packet: ')
-                    print(data[0])
-                    try:
+                    #print(data)
+                    #try:
                         #print("\n\nNEW\n " + data[1]
-                        if packet_terminator in data[1]: data[1] = data[1].replace(packet_terminator, '')
-                        for op in  self.cmd_ops.keys():
-                            if op in data[1]: data[1] = data[1].replace(op, '')
+                    if packet_terminator in data[1]: data[1] = data[1].replace(packet_terminator, '')
+                    for op in  self.cmd_ops.keys():
+                        if op in data[1]: data[1] = data[1].replace(op, '')
+                    try:
                         data[1] = eval(str(data[1]))
+                    except SyntaxError as e:
+                        continue
+                    else:
                         data[1] = zlib.decompress(data[1]).decode()
-                        #print(data[1])
                         if data[0] in self.cmd_ops: self.cmd_ops[data[0]](data[1]) #call stored function, pass stored arguments from tuple
                         elif data[0] in self.cmd_ops and len(data) > 2: self.cmd_ops[data[0]][0](data[1], *self.cmd_ops[data[0]][1]) # call stored function this way if more args exist - not tested
                         else: pass
-                    except Exception as e:
-                        if self.debug == True: logging.getLogger("SLICER").exception("Exception occurred") #dump tracestack
-                    break
+
+                        self.data_pkt_buff = ""
+                        break
+
+                    #except Exception as e:
+                    #    if self.debug == True: logging.getLogger("SLICER").exception("Exception occurred") #dump tracestack
+
             #print(data)
 
         '''
@@ -169,8 +181,8 @@ class BlenderComm():
     def check_main_thread (main_thread, server_thread, socket_obj):
         while main_thread.is_alive(): # and server_thread.is_alive():
             time.sleep(1) #default 5
-            logging.getLogger("BLENDER").exception("running check main thread")
-            print("running check main thread")
+            #logging.getLogger("BLENDER").exception("running check main thread")
+            #print("running check main thread")
         socket_obj.stop_server(socket_obj)
         BlenderComm.stop_thread(server_thread)
         exit()
@@ -205,8 +217,8 @@ class BlenderComm():
 
         def handle_read(self):
             data = self.recv(8192)
-            print("INCOMING RAW DATA:")
-            print(data)
+            #print("INCOMING RAW DATA:")
+            #print(data)
             self.received_data.append(data)
             for i in range(0, len(self.received_data)):
                 try: self.received_data[i] = self.received_data[i].decode()
@@ -270,16 +282,18 @@ class BlenderComm():
         def _process_data(self):
             """We have the full ECHO command"""
             data = ''.join(self.received_data)
+            #print(data)
             if packet_terminator not in data: return
-            data = data[:-len(packet_terminator)]
+            data = data.split(packet_terminator, 1)[0]
             #print(data)
             data = data.split(' net_packet: ')
             #print(data)
             self.received_data = [] #empty buffer
             try:
+                #print(data[1])
                 data[1] = eval(str(data[1]))
                 data[1] = zlib.decompress(data[1]).decode()
-                print("received CMD: " + data[0])
+                #print("received CMD: " + data[0])
                 #print(data[1])
                 if data[0] in self.cmd_ops_client:
                     #self.cmd_ops_client[data[0]](data[1]) #call stored function, pass stored arguments from tuple
@@ -287,6 +301,7 @@ class BlenderComm():
                 #elif data[0] in self.cmd_ops_client and len(data) > 2: self.cmd_ops_client[data[0]][0](data[1], *self.cmd_ops_client[data[0]][1])
                 else: pass
             except Exception as e:
+                #print(e)
                 if self.instance.debug == True: logging.getLogger("BLENDER").exception("Exception occurred") #dump tracestack
 
         def send_data(self, cmd, data):
