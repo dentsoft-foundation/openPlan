@@ -401,7 +401,7 @@ def obj_check_send():
 
     handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
     if "export_to_slicer" not in handlers:
-        bpy.app.handlers.depsgraph_update_post.append(export_to_slicer) 
+        bpy.app.handlers.depsgraph_update_post.append(export_to_slicer)
                     
     if "SlicerLink" not in bpy.data.collections:
         sg = bpy.data.collections.new('SlicerLink')
@@ -420,16 +420,22 @@ def obj_check_send():
 
 def update_scene_blender(xml):
     #time.sleep(0.5)
-    tmp_rmv_sg = False
+    #tmp_rmv_sg = False
+    #handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
     bpy.ops.object.select_all(action='DESELECT')
     #print(xml)
     tree = ElementTree(fromstring(xml))
     x_scene = tree.getroot()
     bpy.data.objects[x_scene[0].get('name')].select_set(True)
     group = x_scene[0].get('group')
-    if x_scene[0].get('name') in bpy.data.collections[group].objects and group == "ViewLink":
-        bpy.data.collections[group].objects.unlink(bpy.data.objects[x_scene[0].get('name')])
-        tmp_rmv_sg = True
+    if x_scene[0].get('name') in bpy.data.collections[group].objects and group == "ViewLink": # and "export_to_slicer" in handlers:
+        #bpy.data.collections[group].objects.unlink(bpy.data.objects[x_scene[0].get('name')]) #doesnt work, console out: unlink -> relink -> view obj changed
+        #tmp_rmv_sg = True
+        #handlers.remove("export_to_slicer")
+        #bpy.app.handlers.depsgraph_update_post.remove(export_to_slicer)
+        print("removed obj from tracking")
+        exclude_viewobj.append(x_scene[0].get('name'))
+
     xml_mx = x_scene[0].find('matrix')
     my_matrix = []
     for i in range(0,4):
@@ -449,11 +455,22 @@ def update_scene_blender(xml):
     if bpy.data.objects[x_scene[0].get('name')].active_material is not None:
         xml_mat = x_scene[0].find('material')
         bpy.data.objects[x_scene[0].get('name')].active_material.diffuse_color = (float(xml_mat[0].text), float(xml_mat[1].text), float(xml_mat[2].text), float(xml_mat[3].text))
-
-
+    '''
+    if tmp_rmv_sg == True and "export_to_slicer" not in handlers: 
+        print("relinking object")
+        bpy.app.handlers.depsgraph_update_post.append(export_to_slicer)
+        bpy.data.collections[group].objects.link(bpy.data.objects[x_scene[0].get('name')])
+    else:
+    '''
     dg = bpy.context.evaluated_depsgraph_get()
     dg.update()
-    if tmp_rmv_sg == True: bpy.data.collections[group].objects.link(bpy.data.objects[x_scene[0].get('name')])
+    print("updated depsgraph")
+    '''
+    handlers = [hand.__name__ for hand in bpy.app.handlers.depsgraph_update_post]
+    if "export_to_slicer" not in handlers:
+        bpy.app.handlers.depsgraph_update_post.append(export_to_slicer)
+        print("added depsgraph handler")
+    '''
 
 
 def resize_slice_plane(planeBMesh, width, height, axes):
@@ -621,10 +638,10 @@ def live_img_update(image):
     '''
     if not int(bm.edges[0].calc_length()) == int(plane_h/10) or not int(bm.edges[1].calc_length()) == int(plane_w/10):
         #we have to be able to select the slice view plane in order to alter it
-        if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
+        if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans and not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
             ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
             ob.hide_select = False
-        if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
+        if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans and not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
             ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
             ob.hide_select = False
         if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
@@ -640,16 +657,16 @@ def live_img_update(image):
         #bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
         setOriginToCenter(bpy.data.objects.get(modelName))
         send_obj_to_slicer([modelName], "ViewLink")
-        if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
+        if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans and not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
             ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
             ob.hide_select = True
-        if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
+        if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans and not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
             ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
             ob.hide_select = True
         if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
             ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
             ob.hide_select = True
-        #print("plane replaced!")
+        print("plane replaced!")
 
     if bm is not None:
         bm.free()
@@ -717,13 +734,17 @@ def export_to_slicer(scene):
         for ob_name in changed_view:
             if ob_name not in bpy.data.objects: continue
             __m.transform_cache[ob_name] = bpy.data.objects[ob_name].matrix_world.copy()
-        view_obs = [bpy.data.objects.get(ob_name) for ob_name in changed_view if bpy.data.objects.get(ob_name) and ob_name in bpy.data.collections["ViewLink"].objects]
+        global exclude_viewobj
+        view_obs = [bpy.data.objects.get(ob_name) for ob_name in changed_view if bpy.data.objects.get(ob_name) and ob_name in bpy.data.collections["ViewLink"].objects and ob_name not in exclude_viewobj]
+        #print("depsgraph, view object changed", view_obs)
         if view_obs is not []:
             x_scene = build_xml_scene(view_obs, "ViewLink")
             xml_str = tostring(x_scene).decode()
             if scene.slice_view_on == True:
                 asyncsock.socket_obj.sock_handler[0].send_data("VIEW_UPDATE", xml_str)
             #print("sent view update command")
+        exclude_viewobj = []
+        
     
 
     """
@@ -889,6 +910,9 @@ class Start3DSlicer(bpy.types.Operator):
             for group in ['SlicerLink', "ViewLink"]:
                 if group not in bpy.data.collections:
                     sg = bpy.data.collections.new(group)
+
+            try: asyncsock.requests_api(bl_info['version']).new_case()
+            except: pass
                 
         return {'FINISHED'}
 
@@ -978,7 +1002,7 @@ class deleteObjectsBoth(bpy.types.Operator):
         elif "3D Slicer" in del_mode:
             if not asyncsock.socket_obj == None:
                 packet = ""
-                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects if ob.name not in bpy.data.collections.get("ViewLink").objects]:
+                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects]: # if ob.name not in bpy.data.collections.get("ViewLink").objects]:
                     #asyncsock.socket_obj.sock_handler[0].send_data("DEL", ob.name)
                     packet = packet + ob[1] + ","
                     if ob[1] in sg.objects: 
@@ -988,7 +1012,7 @@ class deleteObjectsBoth(bpy.types.Operator):
         elif "Both" in del_mode:
             if not asyncsock.socket_obj == None:
                 packet = ""
-                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects if (ob.name not in bpy.data.collections.get("ViewLink").objects) or (ob.name in bpy.data.collections.get("ViewLink").objects and context.scene.slice_view_on == False)]:
+                for ob in [(ob, ob.name) for ob in bpy.context.selected_objects]: # if (ob.name not in bpy.data.collections.get("ViewLink").objects) or (ob.name in bpy.data.collections.get("ViewLink").objects and context.scene.slice_view_on == False)]:
                     #asyncsock.socket_obj.sock_handler[0].send_data("DEL", ob.name)
                     packet = packet + ob[1] + ","
                     if ob[1] in sg.objects: 
@@ -996,6 +1020,7 @@ class deleteObjectsBoth(bpy.types.Operator):
                     write_ob_transforms_to_cache(sg.objects)
                 if not packet == "": asyncsock.socket_obj.sock_handler[0].send_data("DEL", packet[:-1])
             for ob in bpy.context.selected_objects:
+                print("deleting selected obj: ", ob.name)
                 #context.view_layer.objects.active = ob
                 bpy.ops.object.delete(use_global=True, confirm=False)
             
@@ -1044,36 +1069,42 @@ class AddSliceView(bpy.types.Operator):
 
             bpy.ops.object.select_all(action='DESELECT')
 
+            slice_views_array = []
+
             if bpy.data.objects.get(context.scene.slice_name) is None:
-                bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
-                bpy.ops.mesh.select_all(action='DESELECT')
-                bpy.ops.object.editmode_toggle()
-                bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_transverse_slice"
-                bpy.data.objects.get(context.scene.slice_name + "_transverse_slice").data.name = context.scene.slice_name + "_transverse_slice"
+                if not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
+                    bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                    bpy.ops.mesh.select_all(action='DESELECT')
+                    bpy.ops.object.editmode_toggle()
+                    bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_transverse_slice"
+                    bpy.data.objects.get(context.scene.slice_name + "_transverse_slice").data.name = context.scene.slice_name + "_transverse_slice"
 
-                ob = bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") #869
-                if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
-                    ob.hide_select = True
-                TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
-                bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
-                #ob.hide_select = True # not possible b/c when resizing the plane we rely on being able to select it in order to reset the origin, when selection is disabled this cannot happen and plane is not centered appropriately
+                    ob = bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") #869
+                    if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
+                        ob.hide_select = True
+                    TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
+                    bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
+                    #ob.hide_select = True # not possible b/c when resizing the plane we rely on being able to select it in order to reset the origin, when selection is disabled this cannot happen and plane is not centered appropriately
+                    slice_views_array.append(context.scene.slice_name + "_transverse_slice")
 
-                bpy.ops.object.select_all(action='DESELECT')
+                    bpy.ops.object.select_all(action='DESELECT')
 
-                bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
-                bpy.ops.mesh.select_all(action='DESELECT')
-                bpy.ops.object.editmode_toggle()
-                bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_tangential_slice"
-                bpy.data.objects.get(context.scene.slice_name + "_tangential_slice").data.name = context.scene.slice_name + "_tangential_slice"
+                if not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
+                    bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                    bpy.ops.mesh.select_all(action='DESELECT')
+                    bpy.ops.object.editmode_toggle()
+                    bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_tangential_slice"
+                    bpy.data.objects.get(context.scene.slice_name + "_tangential_slice").data.name = context.scene.slice_name + "_tangential_slice"
 
-                ob = bpy.data.objects.get(context.scene.slice_name + "_tangential_slice")
-                if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
-                    ob.hide_select = True
-                TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
-                bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
-                #ob.hide_select = True
+                    ob = bpy.data.objects.get(context.scene.slice_name + "_tangential_slice")
+                    if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
+                        ob.hide_select = True
+                    TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
+                    bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
+                    #ob.hide_select = True
+                    slice_views_array.append(context.scene.slice_name + "_tangential_slice")
 
-                bpy.ops.object.select_all(action='DESELECT')
+                    bpy.ops.object.select_all(action='DESELECT')
 
                 bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
                 bpy.ops.mesh.select_all(action='DESELECT')
@@ -1087,6 +1118,7 @@ class AddSliceView(bpy.types.Operator):
                 TRIANGULATE_mod = ob.modifiers.new(name='triangles4slicer_' + ob.name, type="TRIANGULATE")
                 bpy.ops.object.modifier_apply(modifier=TRIANGULATE_mod.name)
                 #ob.hide_select = True
+                slice_views_array.append(context.scene.slice_name + "_freeview_slice")
 
                 bpy.ops.object.select_all(action='DESELECT')
 
@@ -1097,13 +1129,13 @@ class AddSliceView(bpy.types.Operator):
                 ShowMessageBox("An object with this name exists. Sending to 3D Slicer.", "Slice View Info:")
             
             
-            send_obj_to_slicer([context.scene.slice_name + "_transverse_slice", context.scene.slice_name + "_tangential_slice", context.scene.slice_name + "_freeview_slice"], "ViewLink")
+            send_obj_to_slicer(slice_views_array, "ViewLink")
             #time.sleep(1)
             #send_obj_to_slicer([context.scene.slice_name + "_tangential_slice"], "ViewLink")
             #send_obj_to_slicer([context.scene.slice_name + "_freeview_slice"], "ViewLink")
             time.sleep(0.25)
             #bpy.ops.object.select_all(action='DESELECT')
-            asyncsock.socket_obj.sock_handler[0].send_data("SETUP_SLICE", context.scene.slice_name)
+            asyncsock.socket_obj.sock_handler[0].send_data("SETUP_SLICE", str({'name':context.scene.slice_name, 'views':[x.replace(context.scene.slice_name+"_","") for x in slice_views_array]}))
             context.scene.slice_view_on = True
             
         return {'FINISHED'}
@@ -1117,18 +1149,25 @@ class DeleteSliceView(bpy.types.Operator):
     
     def execute(self,context):
         if asyncsock.socket_obj is not None:
-            if bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") is not None and bpy.data.objects.get(context.scene.slice_name + "_tangential_slice") is not None and bpy.data.objects.get(context.scene.slice_name + "_freeview_slice") is not None:
-                if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
-                    ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
-                    ob.hide_select = False
-                if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans:
-                    ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
-                    ob.hide_select = False
+            slice_views_array = []
+            if bpy.data.objects.get(context.scene.slice_name + "_transverse_slice") is not None or bpy.data.objects.get(context.scene.slice_name + "_tangential_slice") is not None or bpy.data.objects.get(context.scene.slice_name + "_freeview_slice") is not None:
+                if not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
+                    if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans:
+                        ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
+                        ob.hide_select = False
+                    slice_views_array.append(context.scene.slice_name + "_transverse_slice")
+                if not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
+                    if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans: 
+                        ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
+                        ob.hide_select = False
+                    slice_views_array.append(context.scene.slice_name + "_tangential_slice")
                 if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
                     ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
                     ob.hide_select = False
+                slice_views_array.append(context.scene.slice_name + "_freeview_slice")
                 bpy.ops.object.select_all(action='DESELECT')
-                for slice in [context.scene.slice_name + "_transverse_slice", context.scene.slice_name + "_tangential_slice", context.scene.slice_name + "_freeview_slice"]:
+                print("deleting view slices: ", slice_views_array)
+                for slice in slice_views_array:
                     slice_materials = bpy.data.objects[slice].data.materials
                     for material in slice_materials:
                         images = bpy.data.images.keys()
@@ -1155,7 +1194,9 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
     host_port : bpy.props.StringProperty(name = "Port", description = "TCP/IP Comm Port", default = str(asyncsock.address[1]))
     slicer_3dview : bpy.props.BoolProperty(name = "Enable/Disable Slicer 3D view.", default = False, description = "Enabling 3D view in slicer overrides and disables pantomograph feature.")
     lock_transverse_trans : bpy.props.BoolProperty(name = "Lock Transverse Transform", default = True, description = "Enabling locks ability to transform view in Blender.")
+    disable_transverse_view : bpy.props.BoolProperty(name = "Disable Transverse View", default = True, description = "")
     lock_tangential_trans : bpy.props.BoolProperty(name = "Lock Tangential Transform", default = True, description = "Enabling locks ability to transform view in Blender.")
+    disable_tangential_view : bpy.props.BoolProperty(name = "Disable Tangential View", default = True, description = "")
     lock_freeview_trans : bpy.props.BoolProperty(name = "Lock Freeview Transform", default = False, description = "Enabling locks ability to transform view in Blender.")
     
 
@@ -1176,7 +1217,11 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.prop(self, "slicer_3dview")
         row = layout.row()
+        row.prop(self, "disable_transverse_view")
+        row = layout.row()
         row.prop(self, "lock_transverse_trans")
+        row = layout.row()
+        row.prop(self, "disable_tangential_view")
         row = layout.row()
         row.prop(self, "lock_tangential_trans")
         row = layout.row()
@@ -1245,11 +1290,13 @@ class SlicerLinkPanel(bpy.types.Panel):
             row = layout.row()
             row = layout.row()
             row.label(text="Slice View Operators:")
-            row = layout.row()
-            #row.prop(context.scene, "slice_name")
-            row.operator("link_slicer.add_slice_view")
-            row = layout.row()
-            row.operator("link_slicer.delete_slice_view")
+            if context.scene.slice_view_on == False:
+                row = layout.row()
+                #row.prop(context.scene, "slice_name")
+                row.operator("link_slicer.add_slice_view")
+            if context.scene.slice_view_on == True:
+                row = layout.row()
+                row.operator("link_slicer.delete_slice_view")
 
 class ModalTimerOperator(bpy.types.Operator):
     """Operator which runs its self from a timer"""
@@ -1345,6 +1392,8 @@ def register():
 
     bpy.types.Scene.slice_name = bpy.props.StringProperty(name = "Name", description = "Enter the name of the slice view.", default = "view_obj")
     bpy.types.Scene.slice_view_on = bpy.props.BoolProperty(name = "Slice View Mode", default = False, description = "")
+    global exclude_viewobj
+    exclude_viewobj = []
     
     bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH')
     bpy.utils.register_class(linked_models_collection)

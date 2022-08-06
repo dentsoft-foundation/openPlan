@@ -106,8 +106,8 @@ class BlenderMonitorWidget:
         customLayoutId = 501
         if self.slicer_3dview:
             view_mode = """
-            <view class="vtkMRMLViewNode" singletontag="3D">
-             <property name="viewlabel" action="default">3D</property>
+            <view class="vtkMRMLViewNode" singletontag="1">
+             <property name="viewlabel" action="default">1</property>
             </view>
             """
         else:
@@ -269,6 +269,8 @@ class BlenderMonitorWidget:
     def update_scene_blender(self, modelNode, sock = None, group = 'SlicerLink'):
         #print(tostring(self.build_xml_scene(modelNode.GetName())).decode())
         if sock == None: sock = self.sock
+        print("updating blender scene: ", modelNode.GetName())
+        print(sock)
         sock.send_data("XML", tostring(self.build_xml_scene(modelNode.GetName(), group)).decode())
         #self.sock.send_data("CHECK", "UNLINK_BREAK_" + modelNode.GetName())
 
@@ -591,12 +593,12 @@ class BlenderMonitorWidget:
         
         if((bool(self.sliceViewCache)) and (x_scene[0].get('name') in [slice+"_transverse_slice" for slice in self.sliceViewCache.keys()] or x_scene[0].get('name') in [slice+"_tangential_slice" for slice in self.sliceViewCache.keys()])):
             if self.slicer_3dview:
-                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed', 'vtkMRMLViewNode3D'))
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed', 'vtkMRMLViewNode1'))
             else:
                 modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
         else:
             if self.slicer_3dview:
-                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice", 'vtkMRMLViewNode3D'))
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice", 'vtkMRMLViewNode1'))
             else:
                 modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice",))
 
@@ -631,12 +633,12 @@ class BlenderMonitorWidget:
 
         if((bool(self.sliceViewCache)) and (x_scene[0].get('name') in [slice+"_transverse_slice" for slice in self.sliceViewCache.keys()] or x_scene[0].get('name') in [slice+"_tangential_slice" for slice in self.sliceViewCache.keys()])):
             if self.slicer_3dview:
-                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed', 'vtkMRMLViewNode3D'))
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed', 'vtkMRMLViewNode1'))
             else:
                 modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
         else:
             if self.slicer_3dview:
-                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice", 'vtkMRMLViewNode3D'))
+                modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice", 'vtkMRMLViewNode1'))
             else:
                 modelNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice",))
 
@@ -650,11 +652,12 @@ class BlenderMonitorWidget:
         self.legacy_vertex_threshold = params["legacy_vertex_threshold"]
         #self.tmp_dir = params["tmp_dir"]
 
-    def add_slice_view(self, name):
+    def add_slice_view(self, data):
 
         class sliceViewPanel():
-            def __init__(self, name, widgetClass, layout, parent):
+            def __init__(self, name, views, widgetClass, layout, parent):
                 self.widgetClass = widgetClass
+                self.views = views
                 #self.sliceViewLayout = sliceViewLayout
                 self.parent = parent
                 self.curvePoints = None
@@ -711,18 +714,23 @@ class BlenderMonitorWidget:
                 inputFiducialsNodeSelector.setMRMLScene(slicer.mrmlScene)
                 self.inputFiducialsNodeSelector = inputFiducialsNodeSelector
                 
-                # Frame slider
-                self.frameSlider = ctk.ctkSliderWidget()
-                self.frameSlider.connect('valueChanged(double)', self.transverseStep)
-                self.frameSlider.decimals = 0
-                self.sliceViewLayout.addRow("Transverse:", self.frameSlider)
+                if "transverse_slice" in self.views:
+                    self.frameSlider = ctk.ctkSliderWidget()
+                    self.frameSlider.connect('valueChanged(double)', self.transverseStep)
+                    self.frameSlider.decimals = 0
+                    self.sliceViewLayout.addRow("Transverse:", self.frameSlider)
+                if not "transverse_slice" in self.views:
+                    self.frameSlider = ctk.ctkSliderWidget()
+                    self.frameSlider.connect('valueChanged(double)', self.freeViewStep)
+                    self.frameSlider.decimals = 0
+                    self.sliceViewLayout.addRow("Transverse:", self.frameSlider)
 
-                # Slice rotate slider
-                self.rotateView = ctk.ctkSliderWidget()
-                self.rotateView.connect('valueChanged(double)', self.tangentialAngle)
-                self.rotateView.decimals = 0
-                self.rotateView.maximum = 360
-                self.sliceViewLayout.addRow("Tangential:", self.rotateView)
+                if "tangential_slice" in self.views:
+                    self.rotateView = ctk.ctkSliderWidget()
+                    self.rotateView.connect('valueChanged(double)', self.tangentialAngle)
+                    self.rotateView.decimals = 0
+                    self.rotateView.maximum = 360
+                    self.sliceViewLayout.addRow("Tangential:", self.rotateView)
 
                 #Freeview slice sliders
                 self.freeviewCollapsibleButton = ctk.ctkCollapsibleButton()
@@ -779,16 +787,16 @@ class BlenderMonitorWidget:
                     self.normal_angle.maximum = 360
                     self.sliceViewLayout.addRow("View Angle:", self.normal_angle)
 
-                slicer.util.getNode(self.plane_model + "_transverse_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',)) #('vtkMRMLViewNode1', 'vtkMRMLSliceNodeRed', 'vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow')
+                self.slice_dims_buff = {self.plane_model + "_freeview_slice" : None}
+                if "transverse_slice" in self.views:
+                    slicer.util.getNode(self.plane_model + "_transverse_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',)) #('vtkMRMLViewNode1', 'vtkMRMLSliceNodeRed', 'vtkMRMLSliceNodeGreen', 'vtkMRMLSliceNodeYellow')
+                    self.slice_dims_buff[self.plane_model + "_transverse_slice"] = None
                 #slicer.util.getNode(self.plane_model + "_transverse_slice").GetDisplayNode().Modified()
-                slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
+                if "tangential_slice" in self.views:
+                    slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
+                    self.slice_dims_buff[self.plane_model + "_tangential_slice"] = None
                 #slicer.util.getNode(self.plane_model + "_tangential_slice").GetDisplayNode().Modified()
                 slicer.util.getNode(self.plane_model + "_freeview_slice").GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed',))
-
-                self.slice_dims_buff = {self.plane_model + "_transverse_slice" : None,
-                                        self.plane_model + "_tangential_slice" : None,
-                                        self.plane_model + "_freeview_slice" : None
-                                        }
                 
                 #self.widgetClass.slice_view_numpy("Green", self.plane_model + "_transverse", self.sliceSock, mode="NEW")
                 #self.sliceSock.send_data("SELECT_OBJ", self.plane_model + "_transverse")
@@ -879,7 +887,7 @@ class BlenderMonitorWidget:
                         self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_transverse_slice", slicer.util.getNode(self.plane_model + "_transverse_slice"), int(self.get_slice_img_dims("view_transverse_slice")[0]/10))
                         #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_transverse_slice"), self.widgetClass.sock, "ViewLink")
                         self.widgetClass.slice_view_numpy("view_transverse_slice", self.plane_model + "_transverse_slice", self.sliceSock, mode="UPDATE")
-                        time.sleep(0.5)
+                        #time.sleep(0.1)
                     except slicer.util.MRMLNodeNotFoundException: print("node not found")
                 else:
                     #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
@@ -891,20 +899,33 @@ class BlenderMonitorWidget:
                         self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_tangential_slice", slicer.util.getNode(self.plane_model + "_tangential_slice"), int(self.get_slice_img_dims("view_tangential_slice")[0]/10), angle)
                         #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_tangential_slice"), self.widgetClass.sock, "ViewLink")
                         self.widgetClass.slice_view_numpy("view_tangential_slice", self.plane_model + "_tangential_slice", self.sliceSock, mode="UPDATE")
-                        time.sleep(0.5)
+                        #time.sleep(0.1)
                     except slicer.util.MRMLNodeNotFoundException: print("node not found")
                 else:
                     #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
                     pass
 
+            def freeViewStep(self, f):
+                if self.curvePoints is not None:
+                    self.f = int(f)
+                    #try:
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_freeview_slice", slicer.util.getNode(self.plane_model + "_freeview_slice"), int(self.get_slice_img_dims("view_freeview_slice")[0]/10), self.fv_tan_slider.value, self.fv_ax_slider.value)
+                    #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_freeview_slice"), self.widgetClass.sock, "ViewLink")
+                    self.widgetClass.slice_view_numpy("view_freeview_slice", self.plane_model + "_freeview_slice", self.sliceSock, mode="UPDATE")
+                    #time.sleep(0.1)
+                    #except slicer.util.MRMLNodeNotFoundException: print("node not found")
+                else:
+                    #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
+                    pass
+            
             def freeViewAngles(self, event_val):
                 if self.curvePoints is not None:
-                    try:
-                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_freeview_slice", slicer.util.getNode(self.plane_model + "_freeview_slice"), int(self.get_slice_img_dims("view_freeview_slice")[0]/10), self.fv_tan_slider.value, self.fv_ax_slider.value)
-                        #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_freeview_slice"), self.widgetClass.sock, "ViewLink")
-                        self.widgetClass.slice_view_numpy("view_freeview_slice", self.plane_model + "_freeview_slice", self.sliceSock, mode="UPDATE")
-                        time.sleep(0.5)
-                    except slicer.util.MRMLNodeNotFoundException: print("node not found")
+                    #try:
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_freeview_slice", slicer.util.getNode(self.plane_model + "_freeview_slice"), int(self.get_slice_img_dims("view_freeview_slice")[0]/10), self.fv_tan_slider.value, self.fv_ax_slider.value)
+                    #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_freeview_slice"), self.widgetClass.sock, "ViewLink")
+                    self.widgetClass.slice_view_numpy("view_freeview_slice", self.plane_model + "_freeview_slice", self.sliceSock, mode="UPDATE")
+                    #time.sleep(0.1)
+                    #except slicer.util.MRMLNodeNotFoundException: print("node not found")
                 else:
                     #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
                     pass
@@ -939,11 +960,17 @@ class BlenderMonitorWidget:
                     self.curvePoints = node.GetCurvePointsWorld()
                     self.frameSlider.maximum = self.curvePoints.GetNumberOfPoints()-2
                     self.curveNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice"))
-                    for i in range(1,2):
-                        self.transverseStep(i)
-                    for i in range(1,2):
-                        self.tangentialAngle(i)
+                    if "transverse_slice" in self.views:
+                        for i in range(1,2):
+                            self.transverseStep(i)
+                    if "tangential_slice" in self.views:
+                        for i in range(1,2):
+                            self.tangentialAngle(i)
+
                     
+                    if not "transverse_slice" in self.views:
+                        for i in range(1,2):
+                            self.freeViewStep(i)
                     for i in range(1,2):
                         self.fv_tan_slider.value = i
                         self.freeViewAngles(i)
@@ -1035,7 +1062,9 @@ class BlenderMonitorWidget:
                 sliceNode.UpdateMatrices()
                 sliceNode.Modified()
         
-        self.sliceViewCache[name] = sliceViewPanel(name, self, self.layout, self.parent)
+        params = eval(data)
+        self.views = params['views']
+        self.sliceViewCache[params['name']] = sliceViewPanel(params['name'], self.views, self, self.layout, self.parent)
         #print(self.sliceViewCache)
 
     def delete_slice_view(self, name):
@@ -1044,7 +1073,8 @@ class BlenderMonitorWidget:
         #self.sliceViewCache[name].sliceNodeSelector.deleteLater()
         self.sliceViewCache[name].inputFiducialsNodeSelector.deleteLater()
         self.sliceViewCache[name].frameSlider.deleteLater()
-        self.sliceViewCache[name].rotateView.deleteLater()
+        if "tangential_slice" in self.views:
+            self.sliceViewCache[name].rotateView.deleteLater()
         self.sliceViewCache[name].fv_tan_slider.deleteLater()
         self.sliceViewCache[name].fv_ax_slider.deleteLater()
         if self.slicer_3dview == False:
@@ -1137,11 +1167,12 @@ class BlenderMonitorWidget:
             self.sliceViewCache["view_obj"].slice_dims_buff[modelName] = imageSize
         elif self.sliceViewCache["view_obj"].slice_dims_buff[modelName] is not None and self.sliceViewCache["view_obj"].slice_dims_buff[modelName] == imageSize:
             mode = "UPDATE"
-        #print(mode)
+        print(mode)
         if mode == "NEW":
             socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
         if mode == "UPDATE":
             socket.send_data("SLICE_UPDATE", sliceNode.GetName() + "_BREAK_" + modelName + "_BREAK_" + str(capturedImage.GetDimensions()) + "_BREAK_" + str(imageSize) + "_BREAK_" + str(a))
+            print("slice update model name: ", modelName)
             self.update_scene_blender(slicer.util.getNode(modelName), socket, "ViewLink")
 
     def slice_view_update_scene(self,  xml):

@@ -18,6 +18,121 @@ import zlib
 import time
 from datetime import datetime
 
+import requests
+import subprocess
+import json
+import re
+import xml.etree.ElementTree as ET
+import platform
+import tempfile
+import zipfile
+class requests_api():
+    def __init__(self, addon_v):
+        self.api = "https://design.d3tool.com/api.php"
+        self.addon_v = addon_v
+        login_data = {
+            "app_token":"2fd542dbdc745ecd0225d463942de087"
+        }
+        self.requests_session = requests.Session()
+        self.requests_session.post(self.api[:-7] + "auth-login.php", data=login_data)
+        #print(self.requests_session)
+
+    def update_addon(self):
+        data = {
+        'action':"openPlan-update"
+        }
+        response = json.loads(self.requests_session.post(self.api, data=data).text)
+        #print(response)
+        if eval(response['version']) == self.addon_v:
+            #print("UP TO DATE")
+            pass
+        elif eval(response['version']) != self.addon_v:
+            #print("UPDATE REQUIRED")
+            #print(response['update_url'])
+            addon_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            #print(addon_dir)
+            file = self.requests_session.get(response['update_url'], allow_redirects=True)
+            open(os.path.join(tempfile.gettempdir(), "openPlan.zip"), 'wb').write(file.content)
+            zip_file_object = zipfile.ZipFile(os.path.join(tempfile.gettempdir(), "openPlan.zip"), 'r')
+            zip_file_object.extractall(addon_dir)
+
+    def new_case(self):
+        UID , sys_info = self.machine_info()
+        data = {
+        'machine_id':UID,
+        'ip_addr':requests.get('https://checkip.amazonaws.com').text.strip(),
+        'errors': 'None',
+        'version':str(self.addon_v),
+        'system_info':sys_info
+        }
+        self.requests_session.post(self.api, data=data)
+        try: self.update_addon()
+        except: pass
+
+    def new_error(self, error):
+        UID , sys_info = self.machine_info()
+        data = {
+        'machine_id':UID,
+        'ip_addr':requests.get('https://checkip.amazonaws.com').text.strip(),
+        'errors': str(error),
+        'version':str(self.addon_v),
+        'system_info':sys_info
+        }
+        self.requests_session.post(self.api, data=data)
+
+    def machine_info(self):
+        UID = None
+        if platform.system() == "Windows":
+            SW_HIDE = 0
+            info = subprocess.STARTUPINFO()
+            info.dwFlags = subprocess.STARTF_USESHOWWINDOW
+            info.wShowWindow = SW_HIDE
+            current_machine_id = subprocess.check_output('wmic csproduct get uuid', startupinfo=info).decode().split('\n')[1].strip()
+            UID = current_machine_id
+
+            Id = subprocess.check_output(['systeminfo'], startupinfo=info).decode('utf-8').split('\n')
+            sys_info = {}
+            n=0
+            for item in Id:
+                item = item.split("\r")[:-1]
+                if type(item) == type(list()) and len(item)>0 and "Total Physical Memory" in item[0]:
+                    sys_info["physical_memory"] = item[0].strip().replace(" ", "").split(":")[1]
+                elif type(item) == type(list()) and len(item)>0 and "OS Name" in item[0]:
+                    sys_info["os"] = item[0].strip().replace(" ", "").split(":")[1]
+                elif type(item) == type(list()) and len(item)>0 and "Processor(s)" in item[0]:
+                    sys_info["cpu"] = Id[n+1].strip().replace(" ", "").split(":")[1]
+
+                n+=1
+            return UID, json.dumps(sys_info)
+
+        elif platform.system() == "Darwin": #macOS
+            system_profile_data = subprocess.Popen(
+                ['system_profiler', '-xml', 'SPHardwareDataType', 'SPSoftwareDataType'], stdout=subprocess.PIPE)
+            xml_stdout = ET.fromstring(system_profile_data.stdout.read())
+            UID = None
+            sys_info = {}
+            data = []
+            for tag in xml_stdout.iter():
+                tag = re.sub(r'\s', '', tag.text)
+                if tag != '':
+                    data.append(tag)
+            #print(data)
+            n=0
+            for info in data:
+                if UID is None and 'serial_number' in info:
+                    UID = data[n+1]
+                if not 'cpu_type' in sys_info and 'cpu_type' in info:
+                    sys_info['cpu_type'] = data[n+1]
+                if not 'current_processor_speed' in sys_info and 'current_processor_speed' in info:
+                    sys_info['current_processor_speed'] = data[n+1]
+                if not 'physical_memory' in sys_info and 'physical_memory' in info:
+                    sys_info['physical_memory'] = data[n+1]
+                if not 'os' in sys_info and 'os_version' in info:
+                    sys_info['os'] = data[n+1]
+                n+=1
+            #print(UID, json.dumps(sys_info))
+            return UID, json.dumps(sys_info)
+
 
 class log():
     def __init__(self, app):
@@ -146,7 +261,7 @@ class SlicerComm():
             self.write_buffer = str.encode(cmd.upper() + " net_packet: " + data + packet_terminator)
             self.socket.write(self.write_buffer)
             self.write_buffer = ""
-            #print("sending: "+ cmd.upper())
+            print("sending CMD: "+ cmd.upper())
 
 class BlenderComm():
 
@@ -284,28 +399,28 @@ class BlenderComm():
             data = ''.join(self.received_data)
             #print(data)
             if packet_terminator not in data: return
-            data = data.split(packet_terminator, 1)[0]
+            data = [pkt for pkt in data.split(packet_terminator) if pkt != packet_terminator][:-1]
             #print(data)
-            data = data.split(' net_packet: ')
-            #print(data)
+            for raw_data in data:
+                cmd, payload = raw_data.split(' net_packet: ')
+                try:
+                    #print(payload)
+                    payload = eval(str(payload))
+                    payload = zlib.decompress(payload).decode()
+                    print("received CMD: " + cmd)
+                    #print(data[1])
+                    if cmd in self.cmd_ops_client:
+                        #self.cmd_ops_client[data[0]](data[1]) #call stored function, pass stored arguments from tuple
+                        self.instance.queue.put([cmd, payload])
+                    #elif data[0] in self.cmd_ops_client and len(data) > 2: self.cmd_ops_client[data[0]][0](data[1], *self.cmd_ops_client[data[0]][1])
+                    else: pass
+                except Exception as e:
+                    #print(e)
+                    if self.instance.debug == True: logging.getLogger("BLENDER").exception("Exception occurred") #dump tracestack
             self.received_data = [] #empty buffer
-            try:
-                #print(data[1])
-                data[1] = eval(str(data[1]))
-                data[1] = zlib.decompress(data[1]).decode()
-                #print("received CMD: " + data[0])
-                #print(data[1])
-                if data[0] in self.cmd_ops_client:
-                    #self.cmd_ops_client[data[0]](data[1]) #call stored function, pass stored arguments from tuple
-                    self.instance.queue.put(data)
-                #elif data[0] in self.cmd_ops_client and len(data) > 2: self.cmd_ops_client[data[0]][0](data[1], *self.cmd_ops_client[data[0]][1])
-                else: pass
-            except Exception as e:
-                #print(e)
-                if self.instance.debug == True: logging.getLogger("BLENDER").exception("Exception occurred") #dump tracestack
 
         def send_data(self, cmd, data):
-            #print("sent CMD: " + cmd, data)
+            print("sent CMD: " + cmd, data)
             data = str(zlib.compress(str.encode(data, encoding='UTF-8'), compression))
             self.send(str.encode(cmd.upper() + " net_packet: " + data + packet_terminator))
 
