@@ -863,7 +863,7 @@ class Start3DSlicer(bpy.types.Operator):
                     "\tfor patientUID in patientUIDs:\n",
                     "\t\tloadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))\n",
                     "slicer.util.selectModule('BlenderMonitor')\n",
-                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s)\n"%bpy.context.preferences.addons[__name__].preferences.slicer_3dview,
+                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s, %s)\n"%(bpy.context.preferences.addons[__name__].preferences.slicer_3dview, bpy.context.preferences.addons[__name__].preferences.blender_slice_views),
                     "slicer.util.setSliceViewerLayers(background=slicer.util.getNode(loadedNodeIDs[0]))\n",
                     "slicer.util.getModuleWidget('BlenderMonitor').workingVolume = slicer.util.getNode(loadedNodeIDs[0])\n",
                     "slicer.util.getModuleWidget('BlenderMonitor').connect_to_blender('%s', %d)"%(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
@@ -871,7 +871,7 @@ class Start3DSlicer(bpy.types.Operator):
             elif os.path.splitext(context.scene.DICOM_dir)[1].lower() == ".mrb":
                 slicer_startup_parameters = ''.join((
                     "slicer.util.selectModule('BlenderMonitor')\n",
-                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s)\n"%bpy.context.preferences.addons[__name__].preferences.slicer_3dview,
+                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s, %s)\n"%(bpy.context.preferences.addons[__name__].preferences.slicer_3dview, bpy.context.preferences.addons[__name__].preferences.blender_slice_views),
                     "slicer.util.loadScene('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
                     "slicer.util.getModuleWidget('BlenderMonitor').connect_to_blender('%s', %d)\n"%(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
                 ))
@@ -886,7 +886,7 @@ class Start3DSlicer(bpy.types.Operator):
                 slicer_startup_parameters = ''.join((
                     "volumeNode = slicer.util.loadVolume('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
                     "slicer.util.selectModule('BlenderMonitor')\n",
-                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s)\n"%bpy.context.preferences.addons[__name__].preferences.slicer_3dview,
+                    "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s, %s)\n"%(bpy.context.preferences.addons[__name__].preferences.slicer_3dview, bpy.context.preferences.addons[__name__].preferences.blender_slice_views),
                     "slicer.util.setSliceViewerLayers(background=volumeNode)\n",
                     "slicer.util.getModuleWidget('BlenderMonitor').workingVolume = volumeNode\n",
                     "slicer.util.getModuleWidget('BlenderMonitor').connect_to_blender('%s', %d)"%(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
@@ -1192,7 +1192,8 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
     dir_3d_slicer : bpy.props.StringProperty(name = "3D Slicer Location:", description = "Directory path of 3D Slicer for startup.", default = "", subtype='FILE_PATH')
     host_addr : bpy.props.StringProperty(name = "Host", description = "", default = asyncsock.address[0])
     host_port : bpy.props.StringProperty(name = "Port", description = "TCP/IP Comm Port", default = str(asyncsock.address[1]))
-    slicer_3dview : bpy.props.BoolProperty(name = "Enable/Disable Slicer 3D view.", default = False, description = "Enabling 3D view in slicer overrides and disables pantomograph feature.")
+    slicer_3dview : bpy.props.BoolProperty(name = "Enable Slicer 3D view.", default = True, description = "Enabling 3D view in slicer overrides and disables pantomograph feature.")
+    blender_slice_views : bpy.props.BoolProperty(name = "Enable 3D Slicer views in Blender.", default = False, description = "Experimental.")
     lock_transverse_trans : bpy.props.BoolProperty(name = "Lock Transverse Transform", default = True, description = "Enabling locks ability to transform view in Blender.")
     disable_transverse_view : bpy.props.BoolProperty(name = "Disable Transverse View", default = True, description = "")
     lock_tangential_trans : bpy.props.BoolProperty(name = "Lock Tangential Transform", default = True, description = "Enabling locks ability to transform view in Blender.")
@@ -1215,17 +1216,20 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
         row.prop(self, "host_addr")
         row.prop(self, "host_port")
         row = layout.row()
-        row.prop(self, "slicer_3dview")
-        row = layout.row()
-        row.prop(self, "disable_transverse_view")
-        row = layout.row()
-        row.prop(self, "lock_transverse_trans")
-        row = layout.row()
-        row.prop(self, "disable_tangential_view")
-        row = layout.row()
-        row.prop(self, "lock_tangential_trans")
-        row = layout.row()
-        row.prop(self, "lock_freeview_trans")
+        row.prop(self, "blender_slice_views")
+        if context.preferences.addons[__name__].preferences.blender_slice_views:
+            row = layout.row()
+            row.prop(self, "slicer_3dview")
+            row = layout.row()
+            row.prop(self, "disable_transverse_view")
+            row = layout.row()
+            row.prop(self, "lock_transverse_trans")
+            row = layout.row()
+            row.prop(self, "disable_tangential_view")
+            row = layout.row()
+            row.prop(self, "lock_tangential_trans")
+            row = layout.row()
+            row.prop(self, "lock_freeview_trans")
 
 
 class SlicerLinkPanel(bpy.types.Panel):
@@ -1288,14 +1292,15 @@ class SlicerLinkPanel(bpy.types.Panel):
             #row = layout.row()
             #row.prop(context.scene, "delete_slicer")
             row = layout.row()
-            row = layout.row()
-            row.label(text="Slice View Operators:")
-            if context.scene.slice_view_on == False:
+            if context.preferences.addons[__name__].preferences.blender_slice_views:
                 row = layout.row()
-                #row.prop(context.scene, "slice_name")
-                row.operator("link_slicer.add_slice_view")
-            if context.scene.slice_view_on == True:
-                row = layout.row()
+                row.label(text="Slice View Operators:")
+                if context.scene.slice_view_on == False:
+                    row = layout.row()
+                    #row.prop(context.scene, "slice_name")
+                    row.operator("link_slicer.add_slice_view")
+                if context.scene.slice_view_on == True:
+                    row = layout.row()
                 row.operator("link_slicer.delete_slice_view")
 
 class ModalTimerOperator(bpy.types.Operator):

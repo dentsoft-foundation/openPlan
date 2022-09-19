@@ -101,8 +101,190 @@ class BlenderMonitorWidget:
         self.sampleFormLayout.addRow(addModelButton)
         addModelButton.connect('clicked()', self.onaddModelButtonToggled)
 
-    def config_layout(self, slicer_3dview):
+    class slicerPano():
+        def __init__(self, widgetClass, layout, parent):
+            self.widgetClass = widgetClass
+            #self.sliceViewLayout = sliceViewLayout
+            self.parent = parent
+            self.curvePoints = None
+            self.curveNode = None
+            #self.selectedView = None
+            self.f = None
+            self.slider_event = False
+
+            sliceViewSettings = ctk.ctkCollapsibleButton()
+            sliceViewSettings.text = "Slice View Settings:"
+            layout.addWidget(sliceViewSettings)
+            self.sliceViewLayout = qt.QFormLayout(sliceViewSettings)
+            self.sliceViewSettings = sliceViewSettings
+
+            # Input fiducials node selector
+            inputFiducialsNodeSelector = slicer.qMRMLNodeComboBox()
+            inputFiducialsNodeSelector.objectName = 'inputFiducialsNodeSelector'
+            inputFiducialsNodeSelector.toolTip = "Select a fiducial list to define control points for the path."
+            inputFiducialsNodeSelector.nodeTypes = ['vtkMRMLMarkupsCurveNode']
+            inputFiducialsNodeSelector.noneEnabled = True
+            inputFiducialsNodeSelector.addEnabled = True
+            inputFiducialsNodeSelector.removeEnabled = True
+            inputFiducialsNodeSelector.connect('currentNodeChanged(vtkMRMLNode*)', self.curve_node)
+            self.sliceViewLayout.addRow("Input Curve:", inputFiducialsNodeSelector)
+            self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)',
+                                inputFiducialsNodeSelector, 'setMRMLScene(vtkMRMLScene*)')
+
+            inputFiducialsNodeSelector.setMRMLScene(slicer.mrmlScene)
+            self.inputFiducialsNodeSelector = inputFiducialsNodeSelector
+            
+            self.frameSlider = ctk.ctkSliderWidget()
+            self.frameSlider.connect('valueChanged(double)', self.transverseStep)
+            self.frameSlider.decimals = 0
+            self.sliceViewLayout.addRow("Transverse:", self.frameSlider)
+
+            self.rotateView = ctk.ctkSliderWidget()
+            self.rotateView.connect('valueChanged(double)', self.tangentialAngle)
+            self.rotateView.decimals = 0
+            self.rotateView.maximum = 360
+            self.sliceViewLayout.addRow("Tangential:", self.rotateView)
+
+            #Freeview slice sliders
+            self.freeviewCollapsibleButton = ctk.ctkCollapsibleButton()
+            self.freeviewCollapsibleButton.text = "Free View Controls"
+            self.freeviewCollapsibleButton.enabled = True #originally FALSE
+            layout.addWidget(self.freeviewCollapsibleButton)
+
+            # Layout within the Flythrough collapsible button
+            freeviewFormLayout = qt.QFormLayout(self.freeviewCollapsibleButton)
+            # Frame slider
+            self.fv_tan_slider = ctk.ctkSliderWidget()
+            self.fv_tan_slider.connect('valueChanged(double)', self.freeViewAngles)
+            self.fv_tan_slider.decimals = 0
+            self.fv_tan_slider.maximum = 360
+            freeviewFormLayout.addRow("Tangential Angle:", self.fv_tan_slider)
+
+            # Slice rotate slider
+            self.fv_ax_slider = ctk.ctkSliderWidget()
+            self.fv_ax_slider.connect('valueChanged(double)', self.freeViewAngles)
+            self.fv_ax_slider.decimals = 0
+            self.fv_ax_slider.maximum = 360
+            freeviewFormLayout.addRow("Axial Angle:", self.fv_ax_slider)
+            
+            # Turn on slice intersections
+            sliceDisplayNodes = slicer.util.getNodesByClass("vtkMRMLSliceDisplayNode")
+            for sliceDisplayNode in sliceDisplayNodes:
+                sliceDisplayNode.SetIntersectingSlicesVisibility(1)
+
+            # Workaround to force visual update (see https://github.com/Slicer/Slicer/issues/6338)
+            sliceNodes = slicer.util.getNodesByClass('vtkMRMLSliceNode')
+            for sliceNode in sliceNodes:
+                sliceNode.Modified()
+
+        def reslice_on_path(self, p0, pN, viewNode, aspectRatio = None, rotateZ = None, rotateT = None):
+            fx=np.poly1d(np.polyfit([p0[0],pN[0]],[p0[1],pN[1]], 1))
+            fdx = np.polyder(fx)
+            normal_line = lambda x: (-1/fdx(p0[0]))*(x-p0[0])+p0[1]
+            t=np.array([p0[0]+1,normal_line(p0[0]+1),p0[2]], dtype='f')
+            t=t-p0
+            n=pN-p0
+            t.astype(float)
+            n.astype(float)
+            p0.astype(float)
+            sliceNode = slicer.app.layoutManager().sliceWidget(viewNode).mrmlSliceNode()
+            sliceNode.SetSliceToRASByNTP(n[0], n[1], n[2], t[0], t[1], t[2], p0[0], p0[1], p0[2], 0)
+
+            sliceToRas = sliceNode.GetSliceToRAS()
+            if (sliceToRas.GetElement(1, 0) > 0 and sliceToRas.GetElement(1, 2) > 0) or (sliceToRas.GetElement(0, 2) > 0 and sliceToRas.GetElement(1, 0) < 0):
+                transform = vtk.vtkTransform()
+                transform.SetMatrix(sliceToRas)
+                transform.RotateZ(180)
+                #transform.RotateY(180)
+                sliceToRas.DeepCopy(transform.GetMatrix())
+                sliceNode.UpdateMatrices()
+
+            #rescaling dimensions to zoom in using slice node's aspect ratio
+            if aspectRatio is not None:
+                x = aspectRatio # lower number = zoom-in default 50, for pano ~10
+                y = x * sliceNode.GetFieldOfView()[1] / sliceNode.GetFieldOfView()[0]
+                z = sliceNode.GetFieldOfView()[2]
+                sliceNode.SetFieldOfView(x,y,z)
+
+            if rotateZ is not None:
+                transform = vtk.vtkTransform()
+                transform.SetMatrix(sliceToRas)
+                transform.RotateY(rotateZ)
+                sliceToRas.DeepCopy(transform.GetMatrix())
+                sliceNode.UpdateMatrices()
+
+            if rotateT is not None:
+                transform = vtk.vtkTransform()
+                transform.SetMatrix(sliceToRas)
+                transform.RotateX(rotateT)
+                sliceToRas.DeepCopy(transform.GetMatrix())
+                sliceNode.UpdateMatrices()
+
+            sliceNode.Modified()
+
+            widget = slicer.app.layoutManager().sliceWidget(viewNode)
+            view = widget.sliceView()
+            view.forceRender()
+        
+        def transverseStep(self, f):
+            if self.curvePoints is not None:
+                self.f = int(f)
+                try:
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_transverse_slice", None)
+                except slicer.util.MRMLNodeNotFoundException: print("node not found")
+            else:
+                #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
+                pass
+
+        def tangentialAngle(self, angle):
+            if self.curvePoints is not None:
+                try:
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_tangential_slice", None, angle)
+                except slicer.util.MRMLNodeNotFoundException: print("node not found")
+            else:
+                #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
+                pass
+
+        def freeViewStep(self, f):
+            if self.curvePoints is not None:
+                self.f = int(f)
+                try:
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_freeview_slice", None, self.fv_tan_slider.value, self.fv_ax_slider.value)
+                except slicer.util.MRMLNodeNotFoundException: print("node not found")
+            else:
+                #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
+                pass
+        
+        def freeViewAngles(self, event_val):
+            if self.curvePoints is not None:
+                try:
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_freeview_slice", None, self.fv_tan_slider.value, self.fv_ax_slider.value)
+                except slicer.util.MRMLNodeNotFoundException: print("node not found")
+            else:
+                #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
+                pass
+
+        def curve_node(self, node):
+            if node is not None:
+                self.curveNode = node
+                self.curvePoints = node.GetCurvePointsWorld()
+                self.frameSlider.maximum = self.curvePoints.GetNumberOfPoints()-2
+                self.curveNode.GetDisplayNode().SetViewNodeIDs(('vtkMRMLSliceNodeRed','vtkMRMLSliceNodeview_transverse_slice', 'vtkMRMLSliceNodeview_tangential_slice', "vtkMRMLSliceNodeview_freeview_slice"))
+                for i in range(1,2):
+                    self.transverseStep(i)
+                for i in range(1,2):
+                    self.tangentialAngle(i)
+                for i in range(1,2):
+                    self.freeViewStep(i)
+                for i in range(1,2):
+                    self.fv_tan_slider.value = i
+                    self.freeViewAngles(i)
+            else: pass    
+
+
+    def config_layout(self, slicer_3dview, blender_slice_views):
         self.slicer_3dview = slicer_3dview
+        self.blender_slice_views = blender_slice_views
         customLayoutId = 501
         if self.slicer_3dview:
             view_mode = """
@@ -164,6 +346,16 @@ class BlenderMonitorWidget:
         lm = slicer.app.layoutManager()
         lm.layoutLogic().GetLayoutNode().AddLayoutDescription(customLayoutId, XML_layout)
         lm.setLayout(customLayoutId)
+        
+        if not self.blender_slice_views:
+            #enable slice view in 3D viewer
+            lm.sliceWidget("view_transverse_slice").sliceController().setSliceVisible(True)
+            lm.sliceWidget("view_tangential_slice").sliceController().setSliceVisible(True)
+            lm.sliceWidget("view_freeview_slice").sliceController().setSliceVisible(True)
+            self.slicerPano(self, self.layout, self.parent)
+
+    
+
 
     def connect_to_blender(self, host, port):
         self.host_address = host
