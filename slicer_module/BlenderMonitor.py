@@ -168,7 +168,20 @@ class BlenderMonitorWidget:
     def connect_to_blender(self, host, port):
         self.host_address = host
         self.host_port = port
-        self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), int(self.host_port), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params), ("VIEW_UPDATE", self.slice_view_update_scene), ("SAVE", self.save_project)], self.log_debug.isChecked())
+        self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), 
+                                                    int(self.host_port), 
+                                                    [("XML", self.update_scene), 
+                                                    ("OBJ", self.import_obj_from_blender), 
+                                                    ("OBJ_MULTIPLE", self.import_multiple), 
+                                                    ("CHECK", self.obj_check_handle), 
+                                                    ("DEL", self.delete_model), 
+                                                    ("SETUP_SLICE", self.add_slice_view), 
+                                                    ("DEL_SLICE", self.delete_slice_view), 
+                                                    ("FILE_OBJ", self.FILE_import_obj_from_blender), 
+                                                    ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), 
+                                                    ("CONFIG_PARAMS", self.blender_config_params), 
+                                                    ("VIEW_UPDATE", self.slice_view_update_scene), 
+                                                    ("SAVE", self.save_project)], self.log_debug.isChecked())
 
     def onaddModelButtonToggled(self): #, select = None):
         for model in self.SlicerSelectedModelsList:
@@ -666,7 +679,7 @@ class BlenderMonitorWidget:
                 self.plane_model = name
                 self.f = None
                 self.slider_event = False
-
+                # create new connection.  A 2nd connection to Blender server
                 self.sliceSock = asyncsock.SlicerComm.EchoClient(str(self.widgetClass.host_address), int(self.widgetClass.host_port), [("XML", self.widgetClass.update_scene), ("OBJ", self.widgetClass.import_obj_from_blender), ("OBJ_MULTIPLE", self.widgetClass.import_multiple), ("CHECK", self.widgetClass.obj_check_handle), ("DEL", self.widgetClass.delete_model), ("SETUP_SLICE", self.widgetClass.add_slice_view), ("DEL_SLICE", self.widgetClass.delete_slice_view)])
                 
                 sliceViewSettings = ctk.ctkCollapsibleButton()
@@ -821,8 +834,11 @@ class BlenderMonitorWidget:
                 wti.SetInput(rw)
                 wti.Update()
                 capturedImage = wti.GetOutput()
-                return capturedImage.GetDimensions()
+                val = capturedImage.GetDimensions()
+                print('IMAGE DIMENSIONS', val)
+                return val
 
+            # @Patrick look here, look at the RAS print out some stuff
             def reslice_on_path(self, p0, pN, viewNode, planeNode, aspectRatio = None, rotateZ = None, rotateT = None):
                 #print(viewNode)
                 fx=np.poly1d(np.polyfit([p0[0],pN[0]],[p0[1],pN[1]], 1))
@@ -835,15 +851,17 @@ class BlenderMonitorWidget:
                 n.astype(float)
                 p0.astype(float)
                 sliceNode = slicer.app.layoutManager().sliceWidget(viewNode).mrmlSliceNode()
+                # create a RightAnteriorSuperior matrix transform from normal
                 sliceNode.SetSliceToRASByNTP(n[0], n[1], n[2], t[0], t[1], t[2], p0[0], p0[1], p0[2], 0)
 
                 sliceToRas = sliceNode.GetSliceToRAS()
+                print('SLICE TO RAS', sliceToRas)
                 if (sliceToRas.GetElement(1, 0) > 0 and sliceToRas.GetElement(1, 2) > 0) or (sliceToRas.GetElement(0, 2) > 0 and sliceToRas.GetElement(1, 0) < 0):
-                    transform = vtk.vtkTransform()
-                    transform.SetMatrix(sliceToRas)
-                    transform.RotateZ(180)
-                    #transform.RotateY(180)
-                    sliceToRas.DeepCopy(transform.GetMatrix())
+                    transformVTK = vtk.vtkTransform()
+                    transformVTK.SetMatrix(sliceToRas)
+                    transformVTK.RotateZ(180)
+                    #transformVTK.RotateY(180)
+                    sliceToRas.DeepCopy(transformVTK.GetMatrix())
                     sliceNode.UpdateMatrices()
 
                 #rescaling dimensions to zoom in using slice node's aspect ratio
@@ -853,23 +871,26 @@ class BlenderMonitorWidget:
                     y = x * sliceNode.GetFieldOfView()[1] / sliceNode.GetFieldOfView()[0]
                     z = sliceNode.GetFieldOfView()[2]
                     sliceNode.SetFieldOfView(x,y,z)
+                    print('aspectRation None:', (x,y,z))
 
                 if rotateZ is not None:
-                    transform = vtk.vtkTransform()
-                    transform.SetMatrix(sliceToRas)
-                    transform.RotateY(rotateZ)
-                    sliceToRas.DeepCopy(transform.GetMatrix())
+                    transformVTK = vtk.vtkTransform()
+                    transformVTK.SetMatrix(sliceToRas)
+                    transformVTK.RotateY(rotateZ)
+                    sliceToRas.DeepCopy(transformVTK.GetMatrix())
                     sliceNode.UpdateMatrices()
 
                 if rotateT is not None:
-                    transform = vtk.vtkTransform()
-                    transform.SetMatrix(sliceToRas)
-                    transform.RotateX(rotateT)
-                    sliceToRas.DeepCopy(transform.GetMatrix())
+                    transformVTK = vtk.vtkTransform()
+                    transformVTK.SetMatrix(sliceToRas)
+                    transformVTK.RotateX(rotateT)
+                    sliceToRas.DeepCopy(transformVTK.GetMatrix())
                     sliceNode.UpdateMatrices()
                 
                 sliceNode.Modified()
                 
+                #print("TRANSFORM GET MATRIX", transform.GetMatrix())
+                #@Georgi, todo, let's get a new variable, you use transform above
                 transform = slicer.util.getNode(planeNode.GetName()+'_trans')
                 #transform.SetMatrix(sliceNode.GetSliceToRAS())
                 transform.SetAndObserveMatrixTransformToParent(sliceNode.GetSliceToRAS())
@@ -884,7 +905,11 @@ class BlenderMonitorWidget:
                 if self.curvePoints is not None:
                     self.f = int(f)
                     try:
-                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_transverse_slice", slicer.util.getNode(self.plane_model + "_transverse_slice"), int(self.get_slice_img_dims("view_transverse_slice")[0]/10))
+                        self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)),
+                                             np.asarray(self.curvePoints.GetPoint(self.f+1)),
+                                             "view_transverse_slice", slicer.util.getNode(self.plane_model + "_transverse_slice"), 
+                                             int(self.get_slice_img_dims("view_transverse_slice")[0]/10))
+
                         #self.widgetClass.update_scene_blender(slicer.util.getNode(self.plane_model + "_transverse_slice"), self.widgetClass.sock, "ViewLink")
                         self.widgetClass.slice_view_numpy("view_transverse_slice", self.plane_model + "_transverse_slice", self.sliceSock, mode="UPDATE")
                         #time.sleep(0.1)

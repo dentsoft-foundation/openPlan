@@ -602,12 +602,21 @@ def setOriginToCenter(obj):
 
 #https://github.com/florianfelix/io_import_images_as_planes_rewrite/blob/master/io_import_images_as_planes.py#L918
 def live_img_update(image):
+    start = time.time()
     sliceName, modelName, image_dim, plane_dim, image_np = image.split("_BREAK_")
+    finish = time.time()
+    print(f'split payload string split: {round(1000 * (finish - start), 3)/1000} seconds')
+
     image_dim = eval(image_dim)
     plane_dim = eval(plane_dim)
     image_w, image_h = image_dim[0], image_dim[1]
     plane_w, plane_h = plane_dim[0], plane_dim[1]
+
+    start = time.time()
     image_np = eval(image_np)
+    finish = time.time()
+    print(f'Eval numpy pixel data: {round(1000 * (finish - start), 3)/1000} seconds')
+
     #print(image_np)
     if sliceName not in bpy.data.images.keys():
         bpy.data.images.new(sliceName, width=20, height=20, alpha=True, float_buffer=True)
@@ -620,57 +629,84 @@ def live_img_update(image):
         outputImg.generated_width = image_w
         outputImg.generated_height = image_h
 
+    start = time.time()
     outputImg.pixels = ((np.asarray(image_np))*1/255).flatten()
+    finish = time.time()
+    print(f'Updated image data in {round(1000 * (finish - start), 3)/1000} seconds')
+
+    planeOb = bpy.data.objects.get(modelName)
+    if planeOb is None:
+        #TODO, some out of sync error handling
+        return
     
-    me = bpy.data.meshes.get(bpy.data.objects[modelName].data.name)
-    bm = bmesh.new()
-    bm.from_mesh(me)
-    if hasattr(bm.verts, "ensure_lookup_table"): 
-        bm.edges.ensure_lookup_table()
-        # only if you need to:
-        # bm.edges.ensure_lookup_table()   
-        # bm.faces.ensure_lookup_table()
+    d0 = planeOb.dimensions[0]
+    d1 = planeOb.dimensions[1]
+
+    # prevent divide by zero
+    if d0 < .00001 or d1 < .00001: return
+
+    s0 = plane_dim[0]/d0/10
+    s1 = plane_dim[1]/d1/10
+
+    sMx = Matrix.Identity(4)
+    sMx[0][0], sMx[1][1]  = s0, s1
+    
+    planeOb.data.transform(sMx)
+    planeOb.data.update()
+
+    # me = bpy.data.meshes.get(bpy.data.objects[modelName].data.name)
+    # bm = bmesh.new()
+    # bm.from_mesh(me)
+    # if hasattr(bm.verts, "ensure_lookup_table"): 
+    #     bm.edges.ensure_lookup_table()
+    #     # only if you need to:
+    #     # bm.edges.ensure_lookup_table()   
+    #     # bm.faces.ensure_lookup_table()
     '''
     print(int(bm.edges[0].calc_length()))
     print(int(plane_h/10))
     print(int(bm.edges[1].calc_length()))
     print(int(plane_w/10))
     '''
-    if not int(bm.edges[0].calc_length()) == int(plane_h/10) or not int(bm.edges[1].calc_length()) == int(plane_w/10):
-        #we have to be able to select the slice view plane in order to alter it
-        if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans and not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
-            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
-            ob.hide_select = False
-        if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans and not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
-            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
-            ob.hide_select = False
-        if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
-            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
-            ob.hide_select = False
 
-        bm = resize_slice_plane(bm, plane_w/10, plane_h/10, [0,1])
-        bm.to_mesh(me)
-        bm.free()
-        me.update()
-        bm = None
-        #bpy.context.view_layer.objects.active = bpy.data.objects.get(modelName)
-        #bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
-        setOriginToCenter(bpy.data.objects.get(modelName))
-        send_obj_to_slicer([modelName], "ViewLink")
-        if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans and not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
-            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
-            ob.hide_select = True
-        if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans and not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
-            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
-            ob.hide_select = True
-        if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
-            ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
-            ob.hide_select = True
-        print("plane replaced!")
+    # start = time.time()
+    # if not int(bm.edges[0].calc_length()) == int(plane_h/10) or not int(bm.edges[1].calc_length()) == int(plane_w/10):
+    #     #we have to be able to select the slice view plane in order to alter it
+    #     if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans and not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
+    #         ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
+    #         ob.hide_select = False
+    #     if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans and not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
+    #         ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
+    #         ob.hide_select = False
+    #     if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
+    #         ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
+    #         ob.hide_select = False
 
-    if bm is not None:
-        bm.free()
-        me.update()
+    #     bm = resize_slice_plane(bm, plane_w/10, plane_h/10, [0,1])
+    #     bm.to_mesh(me)
+    #     bm.free()
+    #     me.update()
+    #     bm = None
+    #     #bpy.context.view_layer.objects.active = bpy.data.objects.get(modelName)
+    #     #bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
+    #     setOriginToCenter(bpy.data.objects.get(modelName))
+    #     send_obj_to_slicer([modelName], "ViewLink")
+    #     if bpy.context.preferences.addons[__name__].preferences.lock_transverse_trans and not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
+    #         ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_transverse_slice")
+    #         ob.hide_select = True
+    #     if bpy.context.preferences.addons[__name__].preferences.lock_tangential_trans and not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
+    #         ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_tangential_slice")
+    #         ob.hide_select = True
+    #     if bpy.context.preferences.addons[__name__].preferences.lock_freeview_trans:
+    #         ob = bpy.data.objects.get(bpy.context.scene.slice_name + "_freeview_slice")
+    #         ob.hide_select = True
+    #     print("plane replaced!")
+
+    # finish = time.time()
+    # print(f'Did some image resize in : {round(1000 * (finish - start), 3)/1000} seconds')
+    # if bm is not None:
+    #     bm.free()
+    #     me.update()
         #print("plane NOT replaced")
     #bpy.context.view_layer.objects.active = bpy.data.objects.get("Plane")
     #bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='MEDIAN')
@@ -1073,7 +1109,7 @@ class AddSliceView(bpy.types.Operator):
 
             if bpy.data.objects.get(context.scene.slice_name) is None:
                 if not bpy.context.preferences.addons[__name__].preferences.disable_transverse_view:
-                    bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                    bpy.ops.mesh.primitive_plane_add(size=1, enter_editmode=True, align='WORLD', location=(0, 0, 0))
                     bpy.ops.mesh.select_all(action='DESELECT')
                     bpy.ops.object.editmode_toggle()
                     bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_transverse_slice"
@@ -1090,7 +1126,7 @@ class AddSliceView(bpy.types.Operator):
                     bpy.ops.object.select_all(action='DESELECT')
 
                 if not bpy.context.preferences.addons[__name__].preferences.disable_tangential_view:
-                    bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                    bpy.ops.mesh.primitive_plane_add(size=1, enter_editmode=True, align='WORLD', location=(0, 0, 0))
                     bpy.ops.mesh.select_all(action='DESELECT')
                     bpy.ops.object.editmode_toggle()
                     bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_tangential_slice"
@@ -1106,7 +1142,7 @@ class AddSliceView(bpy.types.Operator):
 
                     bpy.ops.object.select_all(action='DESELECT')
 
-                bpy.ops.mesh.primitive_plane_add(size=50, enter_editmode=True, align='WORLD', location=(0, 0, 0))
+                bpy.ops.mesh.primitive_plane_add(size=1, enter_editmode=True, align='WORLD', location=(0, 0, 0))
                 bpy.ops.mesh.select_all(action='DESELECT')
                 bpy.ops.object.editmode_toggle()
                 bpy.data.objects.get(context.view_layer.objects.active.name).name = context.scene.slice_name + "_freeview_slice"
