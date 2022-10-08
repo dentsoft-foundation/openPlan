@@ -231,6 +231,9 @@ class BlenderMonitorWidget:
                 self.f = int(f)
                 try:
                     self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_transverse_slice", None)
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_tangential_slice", None, self.rotateView.value)
+                    self.reslice_on_path(np.asarray(self.curvePoints.GetPoint(self.f)), np.asarray(self.curvePoints.GetPoint(self.f+1)), "view_freeview_slice", None, self.fv_tan_slider.value, self.fv_ax_slider.value)
+
                 except slicer.util.MRMLNodeNotFoundException: print("node not found")
             else:
                 #slicer.util.confirmOkCancelDisplay("Open curve path not selected!", "slicerPano Info:")
@@ -353,9 +356,6 @@ class BlenderMonitorWidget:
             lm.sliceWidget("view_tangential_slice").sliceController().setSliceVisible(True)
             lm.sliceWidget("view_freeview_slice").sliceController().setSliceVisible(True)
             self.slicerPano(self, self.layout, self.parent)
-
-    
-
 
     def connect_to_blender(self, host, port):
         self.host_address = host

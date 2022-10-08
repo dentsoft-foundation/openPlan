@@ -854,20 +854,24 @@ class Start3DSlicer(bpy.types.Operator):
         if asyncsock.socket_obj == None and context.scene.DICOM_dir is not None:
             if os.path.splitext(context.scene.DICOM_dir)[1].lower() == ".dcm":
                 slicer_startup_parameters = ''.join((
-                    "dicomDataDir = '%s'\n"%os.path.dirname(context.scene.DICOM_dir).replace(os.sep, '/'),
-                    "loadedNodeIDs = []\n",
-                    "from DICOMLib import DICOMUtils\n",
-                    "with DICOMUtils.TemporaryDICOMDatabase() as db:\n",
-                    "\tDICOMUtils.importDicom(dicomDataDir, db)\n",
-                    "\tpatientUIDs = db.patients()\n",
-                    "\tfor patientUID in patientUIDs:\n",
-                    "\t\tloadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))\n",
+                    "import pydicom\n",
+                    "dcm_f = pydicom.dcmread('%s')\n"%context.scene.DICOM_dir.replace(os.sep, '/'),
+                    "volumeNode = slicer.util.loadVolume('%s', {'center':True})\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
+                    "if dcm_f['ImagePositionPatient'][2] > 0:\n",
+                    "\tprint('flipping z-axis')\n"
+                    "\ttransformNode = slicer.mrmlScene.AddNode(slicer.vtkMRMLTransformNode())\n",
+                    "\tmatrix = vtk.vtkMatrix4x4()\n",
+                    "\tmatrix.DeepCopy((1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1))\n", #inverting z-axis
+                    "\ttransformNode.ApplyTransformMatrix(matrix)\n",
+                    "\tvolumeNode.SetAndObserveTransformNodeID(transformNode.GetID())\n",
+                    "\tslicer.vtkSlicerTransformLogic().hardenTransform(volumeNode)\n",
                     "slicer.util.selectModule('BlenderMonitor')\n",
                     "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s, %s)\n"%(bpy.context.preferences.addons[__name__].preferences.slicer_3dview, bpy.context.preferences.addons[__name__].preferences.blender_slice_views),
-                    "slicer.util.setSliceViewerLayers(background=slicer.util.getNode(loadedNodeIDs[0]))\n",
-                    "slicer.util.getModuleWidget('BlenderMonitor').workingVolume = slicer.util.getNode(loadedNodeIDs[0])\n",
+                    "slicer.util.setSliceViewerLayers(background=volumeNode)\n",
+                    "slicer.util.getModuleWidget('BlenderMonitor').workingVolume = volumeNode\n",
                     "slicer.util.getModuleWidget('BlenderMonitor').connect_to_blender('%s', %d)"%(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
                 ))
+            
             elif os.path.splitext(context.scene.DICOM_dir)[1].lower() == ".mrb":
                 slicer_startup_parameters = ''.join((
                     "slicer.util.selectModule('BlenderMonitor')\n",
@@ -896,7 +900,8 @@ class Start3DSlicer(bpy.types.Operator):
             elif platform.system() == "Darwin": #macOS support
                 bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer = "/Applications/Slicer.app/Contents/MacOS/Slicer"
                 asyncsock.slicer_sysprocess = subprocess.Popen([bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer, "--python-code", slicer_startup_parameters])
-            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
+            asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj), ("STOP_SLICER_PTR", bpy.ops.link_slicer.slicer_link_stop)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
+            #asyncsock.StopSlicerLink_pointer = bpy.ops.link_slicer.slicer_link_stop
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
             context.scene.socket_state = "SERVER"
 
@@ -1032,6 +1037,11 @@ class StopSlicerLink(bpy.types.Operator):
     """
     bl_idname = "link_slicer.slicer_link_stop"
     bl_label = "Slicer Link Stop"
+
+    def invoke(self, context, event):
+        #bpy.ops.wm.read_factory_settings()
+        bpy.ops.wm.read_homefile()
+        return {'FINISHED'}
     
     def execute(self,context):
         
@@ -1316,14 +1326,14 @@ class ModalTimerOperator(bpy.types.Operator):
             return {'CANCELLED'}
 
         if event.type == 'TIMER':
-            while not asyncsock.socket_obj.queue.empty():
+            while not (asyncsock.socket_obj is None or asyncsock.socket_obj.queue.empty()):
                 try:
                     data = asyncsock.socket_obj.queue.get_nowait()
                     asyncsock.socket_obj.cmd_ops[data[0]](data[1])
                 except queue.Empty: continue
-                asyncsock.socket_obj.queue.task_done()
+                #asyncsock.socket_obj.queue.task_done() # not needed since .get_nowait() is non-blocking
 
-            asyncsock.socket_obj.queue.join()
+            #asyncsock.socket_obj.queue.join() # not needed since .get_nowait() is non-blocking
 
         return {'PASS_THROUGH'}
 
@@ -1341,9 +1351,9 @@ class ModalTimerOperator(bpy.types.Operator):
 def on_load_new(*args):
     if platform.system() == "Windows" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
         subprocess.call(['taskkill', '/F', '/T', '/PID',  str(asyncsock.slicer_sysprocess.pid)])
-        bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+        bpy.ops.link_slicer.slicer_link_stop("EXEC_DEFAULT")
     elif platform.system() == "Darwin" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
-        bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
+        bpy.ops.link_slicer.slicer_link_stop("EXEC_DEFAULT")
         asyncsock.slicer_sysprocess.terminate()
         asyncsock.slicer_sysprocess.wait()
         
@@ -1400,7 +1410,7 @@ def register():
     global exclude_viewobj
     exclude_viewobj = []
     
-    bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH')
+    bpy.types.Scene.DICOM_dir = bpy.props.StringProperty(name = "", description = "", default = "", subtype='FILE_PATH') # DIR_PATH
     bpy.utils.register_class(linked_models_collection)
     bpy.types.Scene.linked_models = bpy.props.CollectionProperty(type=linked_models_collection)
 

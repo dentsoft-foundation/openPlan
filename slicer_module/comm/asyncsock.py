@@ -380,7 +380,8 @@ class BlenderComm():
                 if client == self:
                     del self.instance.sock_handler[self.instance.sock_handler.index(self)]
                     print("client instance deleted")
-            print("client disconnected")
+            print("client disconnected, resetting blender server")
+            self.instance.queue.put(["STOP_SLICER_PTR", "INVOKE_DEFAULT"]) # we can't call a blender ops directly bc out of window context error
 
         def handle_read(self):
             while True:
