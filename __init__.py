@@ -822,9 +822,10 @@ class StartSlicerLinkServer(bpy.types.Operator):
     Start updating slicer live by adding a scene_update_post/depsgraph_update_post (2.8) handler
     """
     bl_idname = "link_slicer.slicer_link_server_start"
-    bl_label = "Server"
+    bl_label = "Start"
     
     def execute(self,context):
+        print(asyncsock.socket_obj)
         if asyncsock.socket_obj == None:
             asyncsock.socket_obj = asyncsock.BlenderComm.EchoServer(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port), [("XML", update_scene_blender),("OBJ", import_obj_from_slicer), ("CHECK", obj_check_handle), ("SLICE_UPDATE", live_img_update), ("FILE_OBJ", FILE_import_obj_from_slicer), ("SELECT_OBJ", select_b_obj)], {"legacy_sync" : context.scene.legacy_sync, "legacy_vertex_threshold" : context.scene.legacy_vertex_threshold}, context.scene.debug_log)
             asyncsock.thread = asyncsock.BlenderComm.init_thread(asyncsock.BlenderComm.start, asyncsock.socket_obj)
@@ -840,6 +841,9 @@ class StartSlicerLinkServer(bpy.types.Operator):
             for group in ['SlicerLink', "ViewLink"]:
                 if group not in bpy.data.collections:
                     sg = bpy.data.collections.new(group)
+
+            try: asyncsock.requests_api(bl_info['version']).new_case()
+            except: pass
         return {'FINISHED'}
 
 import platform
@@ -855,16 +859,19 @@ class Start3DSlicer(bpy.types.Operator):
             if os.path.splitext(context.scene.DICOM_dir)[1].lower() == ".dcm":
                 slicer_startup_parameters = ''.join((
                     "import pydicom\n",
-                    "dcm_f = pydicom.dcmread('%s')\n"%context.scene.DICOM_dir.replace(os.sep, '/'),
+                    "dcm_f = pydicom.dcmread('%s', force=True)\n"%context.scene.DICOM_dir.replace(os.sep, '/'),
                     "volumeNode = slicer.util.loadVolume('%s', {'center':True})\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
+                    #"try:\n",
+                    "print('series orientation', dcm_f['ImagePositionPatient'][2])\n",
                     "if dcm_f['ImagePositionPatient'][2] > 0:\n",
-                    "\tprint('flipping z-axis')\n"
                     "\ttransformNode = slicer.mrmlScene.AddNode(slicer.vtkMRMLTransformNode())\n",
                     "\tmatrix = vtk.vtkMatrix4x4()\n",
                     "\tmatrix.DeepCopy((1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1))\n", #inverting z-axis
                     "\ttransformNode.ApplyTransformMatrix(matrix)\n",
                     "\tvolumeNode.SetAndObserveTransformNodeID(transformNode.GetID())\n",
                     "\tslicer.vtkSlicerTransformLogic().hardenTransform(volumeNode)\n",
+                    "\tprint('flipped and hardened')\n",
+                    #"except: pass\n",
                     "slicer.util.selectModule('BlenderMonitor')\n",
                     "slicer.util.getModuleWidget('BlenderMonitor').config_layout(%s, %s)\n"%(bpy.context.preferences.addons[__name__].preferences.slicer_3dview, bpy.context.preferences.addons[__name__].preferences.blender_slice_views),
                     "slicer.util.setSliceViewerLayers(background=volumeNode)\n",
@@ -886,6 +893,7 @@ class Start3DSlicer(bpy.types.Operator):
                     slicer_startup_parameters += slicer_startup_parameters.join((
                         "slicer.util.getModuleWidget('BlenderMonitor').sock.send_data('CHECK', 'LINK_MULTIPLE_BREAK_%s')\n"%(models[:-1]),
                     ))
+            ''' had to comment out per Michael B4D because it opened slicer everytime
             else:
                 slicer_startup_parameters = ''.join((
                     "volumeNode = slicer.util.loadVolume('%s')\n"%(context.scene.DICOM_dir.replace(os.sep, '/')), #this has to be a supported 3d slicer file, there is no check to ensure that
@@ -895,6 +903,7 @@ class Start3DSlicer(bpy.types.Operator):
                     "slicer.util.getModuleWidget('BlenderMonitor').workingVolume = volumeNode\n",
                     "slicer.util.getModuleWidget('BlenderMonitor').connect_to_blender('%s', %d)"%(bpy.context.preferences.addons[__name__].preferences.host_addr, int(bpy.context.preferences.addons[__name__].preferences.host_port))
                 ))
+            '''
             if platform.system() == "Windows": #windows support
                 asyncsock.slicer_sysprocess = subprocess.Popen([os.path.join(bpy.context.preferences.addons[__name__].preferences.dir_3d_slicer), "--python-code", slicer_startup_parameters])
             elif platform.system() == "Darwin": #macOS support
@@ -1056,6 +1065,7 @@ class StopSlicerLink(bpy.types.Operator):
             #except: pass
             asyncsock.socket_obj = None
             context.scene.socket_state = "NONE"
+            print("openPlan server stopped and socket_obj cleared")
         elif context.scene.socket_state == "CLIENT":
             asyncsock.socket_obj.handle_close()
             context.scene.socket_state = "NONE"
@@ -1225,6 +1235,7 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
         row = layout.row()
         row.prop(self, "host_addr")
         row.prop(self, "host_port")
+        ''' hiding based on Michael's feedback
         row = layout.row()
         row.prop(self, "blender_slice_views")
         if context.preferences.addons[__name__].preferences.blender_slice_views:
@@ -1240,6 +1251,7 @@ class SlicerLinkPreferences(bpy.types.AddonPreferences):
             row.prop(self, "lock_tangential_trans")
             row = layout.row()
             row.prop(self, "lock_freeview_trans")
+        '''
 
 
 class SlicerLinkPanel(bpy.types.Panel):
@@ -1265,20 +1277,21 @@ class SlicerLinkPanel(bpy.types.Panel):
         row.prop(context.scene, "host_port")
         '''
         row = layout.row()
+
         if context.scene.socket_state == "NONE":
             #row.label(text="Start Mode:")
-            #row.operator("link_slicer.slicer_link_server_start") #this may become handy as we scale things to the cloud
+            row.operator("link_slicer.slicer_link_server_start") #this may become handy as we scale things to the cloud
             #row.operator("link_slicer.slicer_link_client_start")
-            row.prop(context.scene, "DICOM_dir")
-            row = layout.row()
-            row.operator("link_slicer.slicer_init")
-        '''
-        elif context.scene.socket_state == "SERVER" or context.scene.socket_state == "CLIENT":
+            #row.prop(context.scene, "DICOM_dir")
+            #row = layout.row()
+            #row.operator("link_slicer.slicer_init")
+
+        elif bpy.context.scene.DICOM_dir == '' and (context.scene.socket_state == "SERVER" or context.scene.socket_state == "CLIENT"):
             if context.scene.socket_state == "SERVER": row.label(text="Running: Server mode.")
             elif context.scene.socket_state == "CLIENT":row.label(text="Running: Client mode.")
             row = layout.row()
             row.operator("link_slicer.slicer_link_stop")
-        ''' 
+        
         if context.scene.socket_state == "SERVER" or context.scene.socket_state == "CLIENT":
             row = layout.row()
             row = layout.row()
@@ -1329,7 +1342,8 @@ class ModalTimerOperator(bpy.types.Operator):
             while not (asyncsock.socket_obj is None or asyncsock.socket_obj.queue.empty()):
                 try:
                     data = asyncsock.socket_obj.queue.get_nowait()
-                    asyncsock.socket_obj.cmd_ops[data[0]](data[1])
+                    if data[0] in asyncsock.socket_obj.cmd_ops:
+                        asyncsock.socket_obj.cmd_ops[data[0]](data[1])
                 except queue.Empty: continue
                 #asyncsock.socket_obj.queue.task_done() # not needed since .get_nowait() is non-blocking
 
@@ -1350,12 +1364,16 @@ class ModalTimerOperator(bpy.types.Operator):
 @persistent
 def on_load_new(*args):
     if platform.system() == "Windows" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
-        subprocess.call(['taskkill', '/F', '/T', '/PID',  str(asyncsock.slicer_sysprocess.pid)])
+        print("stpping openPlan server - mode 1: w sys kill")
         bpy.ops.link_slicer.slicer_link_stop("EXEC_DEFAULT")
+        subprocess.call(['taskkill', '/F', '/T', '/PID',  str(asyncsock.slicer_sysprocess.pid)])
     elif platform.system() == "Darwin" and asyncsock.slicer_sysprocess is not None and asyncsock.socket_obj is not None:
         bpy.ops.link_slicer.slicer_link_stop("EXEC_DEFAULT")
         asyncsock.slicer_sysprocess.terminate()
         asyncsock.slicer_sysprocess.wait()
+    if asyncsock.slicer_sysprocess is None and asyncsock.socket_obj is not None:
+        print("stpping openPlan server - mode 2 wo sys kill")
+        bpy.ops.link_slicer.slicer_link_stop("EXEC_DEFAULT")
         
 
 @persistent
@@ -1364,11 +1382,11 @@ def on_load_post(*args):
         bpy.context.scene.DICOM_dir = bpy.data.filepath + ".mrb"
         #bpy.ops.link_slicer.slicer_link_stop("INVOKE_DEFAULT")
         bpy.ops.link_slicer.slicer_init("INVOKE_DEFAULT")
-    pass
 
 @persistent
 def on_save_pre(*args):
     #bpy.context.scene.socket_state = "NONE"
+    if bpy.context.scene.DICOM_dir == '': bpy.context.scene.DICOM_dir = bpy.data.filepath + ".mrb"
     bpy.ops.link_slicer.delete_slice_view("INVOKE_DEFAULT") # - need to figure out a way to manage the slice views on save/load
     bpy.context.scene.linked_models.clear()
     if "SlicerLink" in bpy.data.collections:

@@ -384,7 +384,7 @@ class BlenderComm():
             self.instance.queue.put(["STOP_SLICER_PTR", "INVOKE_DEFAULT"]) # we can't call a blender ops directly bc out of window context error
 
         def handle_read(self):
-            while True:
+            while self.connected:
                 data = self.recv(5242880)
                 #print(data)
                 #self.logger.debug('handle_read() -> %d bytes', len(data))

@@ -95,6 +95,35 @@ class BlenderMonitorWidget:
         self.log_debug.setChecked(True)
         self.sampleFormLayout.addRow("Debug:", self.log_debug)
 
+        # Input volume node selector
+        inputVolumeNodeSelector = slicer.qMRMLNodeComboBox()
+        inputVolumeNodeSelector.objectName = 'inputVolumeNodeSelector'
+        inputVolumeNodeSelector.toolTip = "Select a fiducial list to define control points for the path."
+        inputVolumeNodeSelector.nodeTypes = ['vtkMRMLVolumeNode']
+        inputVolumeNodeSelector.noneEnabled = True
+        inputVolumeNodeSelector.addEnabled = False
+        inputVolumeNodeSelector.removeEnabled = False
+        inputVolumeNodeSelector.connect('currentNodeChanged(vtkMRMLNode*)', self.onbtn_select_volumeClicked)
+        self.sampleFormLayout.addRow("Input Volume:", inputVolumeNodeSelector)
+        self.parent.connect('mrmlSceneChanged(vtkMRMLScene*)',
+                            inputVolumeNodeSelector, 'setMRMLScene(vtkMRMLScene*)')
+
+        self.host_address_input = qt.QLineEdit()
+        self.host_address_input.setText(str(self.host_address))
+        self.sampleFormLayout.addRow("Host:", self.host_address_input)
+        
+        self.host_port_input = qt.QLineEdit()
+        self.host_port_input.setText(str(self.host_port))
+        self.sampleFormLayout.addRow("Port:", self.host_port_input)
+
+        # connect button
+        manual_cnt = qt.QPushButton("Connect")
+        manual_cnt.toolTip = "Connect to configured server."
+        manual_cnt.checkable = True
+        self.sampleFormLayout.addRow(manual_cnt)
+        manual_cnt.connect('toggled(bool)', self.manual_cnt_blender)
+        self.manual_cnt = manual_cnt
+        
         #Models list
         addModelButton = qt.QPushButton("Add Model")
         addModelButton.toolTip = "Add a model to the list to sync with Blender."
@@ -357,10 +386,41 @@ class BlenderMonitorWidget:
             lm.sliceWidget("view_freeview_slice").sliceController().setSliceVisible(True)
             self.slicerPano(self, self.layout, self.parent)
 
+    def manual_cnt_blender(self, checked):
+        if checked:
+            self.watching = True
+            self.manual_cnt.text = "Stop"
+            if self.sock == None:
+                self.host_address = self.host_address_input.text
+                self.host_port = self.host_port_input.text
+                #self.connect_to_blender(self.host_address, self.host_port)
+                self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), int(self.host_port), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params), ("VIEW_UPDATE", self.slice_view_update_scene), ("SAVE", self.save_project)], self.log_debug.isChecked())
+
+                view = slicer.app.layoutManager().sliceWidget("Red").sliceView()
+                sliceNode = view.mrmlSliceNode()
+                sliceLogic = slicer.app.applicationLogic().GetSliceLogic(sliceNode)
+                compositeNode = sliceLogic.GetSliceCompositeNode()
+                compositeNode.GetBackgroundVolumeID()
+                self.onbtn_select_volumeClicked(compositeNode.GetBackgroundVolumeID())
+                
+        else:
+            self.watching = False
+            self.manual_cnt.text = "Start"
+            self.sock.handle_close()
+            self.sock = None
+            
+
+
     def connect_to_blender(self, host, port):
         self.host_address = host
         self.host_port = port
         self.sock = asyncsock.SlicerComm.EchoClient(str(self.host_address), int(self.host_port), [("XML", self.update_scene), ("OBJ", self.import_obj_from_blender), ("OBJ_MULTIPLE", self.import_multiple), ("CHECK", self.obj_check_handle), ("DEL", self.delete_model), ("SETUP_SLICE", self.add_slice_view), ("DEL_SLICE", self.delete_slice_view), ("FILE_OBJ", self.FILE_import_obj_from_blender), ("FILE_OBJ_MULTIPLE", self.FILE_import_multiple), ("CONFIG_PARAMS", self.blender_config_params), ("VIEW_UPDATE", self.slice_view_update_scene), ("SAVE", self.save_project)], self.log_debug.isChecked())
+
+        self.sampleFormLayout.labelForField(self.host_address_input).deleteLater()
+        self.host_address_input.deleteLater()
+        self.sampleFormLayout.labelForField(self.host_port_input).deleteLater()
+        self.host_port_input.deleteLater()
+        self.manual_cnt.deleteLater()
 
     def onaddModelButtonToggled(self): #, select = None):
         for model in self.SlicerSelectedModelsList:
@@ -1396,6 +1456,11 @@ class BlenderMonitorWidget:
         abspath += ".mrb"
         if slicer.util.saveScene(abspath):
             print("Scene saved to: {0}".format(abspath))
+            self.sampleFormLayout.labelForField(self.host_address_input).deleteLater()
+            self.host_address_input.deleteLater()
+            self.sampleFormLayout.labelForField(self.host_port_input).deleteLater()
+            self.host_port_input.deleteLater()
+            self.manual_cnt.deleteLater()
         else:
             print("Scene saving failed")
 
@@ -1543,15 +1608,16 @@ class BlenderMonitorWidget:
         outputStraightenedVolume.GetDisplayNode().CopyContent(volumeNode.GetDisplayNode())
         slicer.mrmlScene.RemoveNode(parameterNode)
 
-    '''
+
     def onbtn_select_volumeClicked(self, volumeNode):
         if volumeNode is not None:
+            if not self.slicer_3dview: self.config_layout(True, False)
             slicer.util.setSliceViewerLayers(background=volumeNode)
             self.workingVolume = volumeNode
         else:
             #slicer.util.confirmOkCancelDisplay("Volume not selected!", "slicerPano Info:")
             pass
-
+    '''
     def onPlayButtonToggled(self, checked):
         if checked:
             self.watching = True
